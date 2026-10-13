@@ -41,6 +41,11 @@ pub struct Client {
 }
 
 impl Client {
+    /// Takes the single HTTP/2 PING handle; callers choose interval and timeout.
+    pub fn take_ping_pong(&mut self) -> Option<h2::PingPong> {
+        self.transport.take_ping_pong()
+    }
+
     /// Connects using plaintext HTTP/2 prior knowledge.
     pub async fn connect(address: &str, limits: Limits) -> Result<Self> {
         let origin = parse_origin(&format!("http://{address}"))?;

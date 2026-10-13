@@ -31,6 +31,7 @@ use crate::{Error, Limits, Result};
 pub struct Client {
     sender: h2::client::SendRequest<Bytes>,
     driver: JoinHandle<std::result::Result<(), h2::Error>>,
+    ping: Option<h2::PingPong>,
 }
 
 impl Client {
@@ -46,19 +47,26 @@ impl Client {
     {
         let header_limit = u32::try_from(limits.max_header_size)
             .map_err(|_| Error::InvalidConfig("header limit"))?;
-        let (sender, connection) = h2::client::Builder::new()
+        let (sender, mut connection) = h2::client::Builder::new()
             .max_header_list_size(header_limit)
             .handshake(io)
             .await?;
+        let ping = connection.ping_pong();
         Ok(Self {
             sender,
             driver: tokio::spawn(connection),
+            ping,
         })
     }
 
     /// Waits for the connection to admit another stream, without replaying requests.
     pub async fn ready(&mut self) -> Result<()> {
         Ok(poll_fn(|cx| self.sender.poll_ready(cx)).await?)
+    }
+
+    /// Takes the connection's single HTTP/2 PING handle for caller-owned keepalive.
+    pub fn take_ping_pong(&mut self) -> Option<h2::PingPong> {
+        self.ping.take()
     }
 
     /// Opens one stream after `ready`, returning independently driven halves.
