@@ -263,7 +263,8 @@ impl Incoming {
         self.state = ReceiveState::Closed;
         if let Some(trailers) = self.receiver.trailers() {
             headers::check_headers(trailers, self.limits.max_header_size)?;
-            self.trailers = Metadata::from_headers(trailers)?;
+            self.trailers =
+                Metadata::from_headers_with_reserved(trailers, headers::is_grpc_reserved_header)?;
             if self.expect_status {
                 return self.final_status(headers::parse_status(
                     trailers,

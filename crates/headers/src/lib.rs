@@ -29,6 +29,6 @@ pub use headers::{
     request_headers, response_headers, status_headers, validate_content_type, validate_encoding,
     validate_path, validate_request,
 };
-pub use metadata::Metadata;
+pub use metadata::{Metadata, is_grpc_reserved_header};
 pub use status::{Code, Status};
 pub use triple_core::{parse_grpc_timeout, parse_tri_service_timeout};

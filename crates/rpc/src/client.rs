@@ -224,7 +224,8 @@ pub fn parse_response(response: Response<h2::RecvStream>, limit: usize) -> Resul
     }
     headers::validate_content_type(response.headers())?;
     headers::validate_encoding(response.headers())?;
-    let metadata = Metadata::from_headers(response.headers())?;
+    let metadata =
+        Metadata::from_headers_with_reserved(response.headers(), headers::is_grpc_reserved_header)?;
     let status = response
         .headers()
         .contains_key("grpc-status")

@@ -78,18 +78,31 @@ impl Metadata {
             .collect())
     }
 
-    /// Parses application metadata, excluding reserved protocol fields.
+    /// Parses application metadata using the legacy gRPC reserved-header policy.
     pub fn from_headers(headers: &HeaderMap) -> Result<Self> {
+        Self::from_headers_with_reserved(headers, is_grpc_reserved_header)
+    }
+
+    /// Parses application metadata with the caller's reserved-header predicate.
+    pub fn from_headers_with_reserved(
+        headers: &HeaderMap,
+        is_reserved: impl Fn(&str) -> bool,
+    ) -> Result<Self> {
         let mut metadata = Self::new();
         for (name, value) in headers {
-            if is_protocol_header(name.as_str()) {
+            if is_reserved(name.as_str()) {
                 continue;
             }
-            metadata_name(name.as_str())?;
+            validate_metadata_name(name.as_str())?;
             if name.as_str().ends_with("-bin") {
                 for part in value.as_bytes().split(|b| *b == b',') {
+                    // TODO(spec): gRPC does not define invalid Base64 handling.
+                    // Preserve the existing failure of the whole metadata parse.
                     let decoded = decode_binary(part.trim_ascii())?;
-                    metadata.append_binary(name.as_str(), &decoded)?;
+                    metadata
+                        .semantic
+                        .append_binary(name.as_str(), &decoded)
+                        .map_err(|_| Error::InvalidHeader("binary metadata name"))?;
                 }
             } else {
                 // gRPC Requests permits discarding an invalid ASCII value that is
@@ -154,8 +167,14 @@ pub(crate) fn decode_binary(value: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn metadata_name(name: &str) -> Result<HeaderName> {
+    if is_grpc_reserved_header(name) {
+        return Err(Error::InvalidHeader("metadata name"));
+    }
+    validate_metadata_name(name)
+}
+
+fn validate_metadata_name(name: &str) -> Result<HeaderName> {
     if name.is_empty()
-        || is_protocol_header(name)
         || !name
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-.".contains(&b))
@@ -165,7 +184,8 @@ fn metadata_name(name: &str) -> Result<HeaderName> {
     HeaderName::from_bytes(name.as_bytes()).map_err(|_| Error::InvalidHeader("metadata name"))
 }
 
-fn is_protocol_header(name: &str) -> bool {
+/// The legacy gRPC protocol fields excluded from custom metadata.
+pub fn is_grpc_reserved_header(name: &str) -> bool {
     name.starts_with("grpc-")
         || name.starts_with(':')
         || matches!(

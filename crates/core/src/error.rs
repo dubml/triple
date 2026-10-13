@@ -1,5 +1,6 @@
 /// Errors in shared RPC semantic values, without transport-specific error fields.
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The path does not contain exactly one service and one method.
     #[error("invalid RPC path")]

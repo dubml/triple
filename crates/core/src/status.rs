@@ -3,6 +3,8 @@ use std::fmt;
 use crate::{Error, Result};
 
 /// Shared RPC status code; numeric values match the gRPC status registry.
+///
+/// This enum remains exhaustive because gRPC defines it as a closed set of codes.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Code {

@@ -96,7 +96,10 @@ async fn handle_call<S: Service>(
         Ok(kind) => kind,
         Err(status) => return immediate_error(&mut responder, &status, limits),
     };
-    let metadata = match Metadata::from_headers(request.headers()) {
+    let metadata = match Metadata::from_headers_with_reserved(
+        request.headers(),
+        headers::is_grpc_reserved_header,
+    ) {
         Ok(metadata) => metadata,
         Err(error) => {
             return immediate_error(
