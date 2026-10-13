@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 triple-core = { path = "../core" }
 headers = { path = "../headers" }
-hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper = { version = "1", features = ["http1", "http2", "server"] }
 http.workspace = true
 http-body-util = "0.1"
 bytes.workspace = true
@@ -16,6 +16,7 @@ flate2 = "1"
 tokio.workspace = true
 
 [dev-dependencies]
+hyper = { version = "1", features = ["client"] }
 hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
 prost.workspace = true
 

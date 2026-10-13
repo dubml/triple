@@ -36,6 +36,8 @@ pub(crate) fn parse(fields: &HeaderMap) -> (Metadata, Vec<String>) {
         }
         // TODO(spec): HTTP RPC does not define invalid custom metadata handling.
         // Discard and record each invalid entry as required for this binding.
+        // TODO: HTTP RPC discards empty ASCII values while gRPC accepts them;
+        // defer aligning the bindings until the agreed follow-up work.
         if !name.as_str().ends_with("-bin") && value.as_bytes().is_empty() {
             discarded.push(name.as_str().to_owned());
             continue;

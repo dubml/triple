@@ -56,11 +56,13 @@ impl UnaryHandler for Greeter {
                     .map_err(|_| Status::new(Code::InvalidArgument, "invalid Protobuf message"))?
                     .name
             }
+            _ => return Err(Status::new(Code::Unimplemented, "unsupported encoding")),
         };
         let message = format!("Hello {name}");
         Ok(match encoding {
             Encoding::Json => Bytes::from(serde_json::json!({"message": message}).to_string()),
             Encoding::Proto => Bytes::from(HelloReply { message }.encode_to_vec()),
+            _ => return Err(Status::new(Code::Unimplemented, "unsupported encoding")),
         })
     }
 }

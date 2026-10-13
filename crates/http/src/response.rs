@@ -47,6 +47,11 @@ pub(crate) fn success(encoding: Encoding, bytes: Bytes) -> Response<Full<Bytes>>
 pub(crate) fn error(status: StatusCode) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::new(Bytes::new()));
     *response.status_mut() = status;
+    if status == StatusCode::METHOD_NOT_ALLOWED {
+        response
+            .headers_mut()
+            .insert(header::ALLOW, HeaderValue::from_static("POST"));
+    }
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),

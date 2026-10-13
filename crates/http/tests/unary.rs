@@ -127,11 +127,13 @@ impl UnaryHandler for Demo {
                     .to_owned()
             }
             Encoding::Proto => HelloRequest::decode(message).unwrap().name,
+            other => panic!("untested encoding: {other:?}"),
         };
         let reply = format!("Hello {name}");
         Ok(match encoding {
             Encoding::Json => Bytes::from(serde_json::json!({"message": reply}).to_string()),
             Encoding::Proto => Bytes::from(HelloReply { message: reply }.encode_to_vec()),
+            other => panic!("untested encoding: {other:?}"),
         })
     }
 }
@@ -289,6 +291,7 @@ fn check_success(reply: &Reply, encoding: Encoding) {
     let media = match encoding {
         Encoding::Json => "application/json",
         Encoding::Proto => "application/proto",
+        other => panic!("untested encoding: {other:?}"),
     };
     assert_eq!(reply.headers["content-type"], media);
     assert_eq!(
@@ -389,7 +392,9 @@ async fn non_post_returns_405(wire: Wire) {
         let mut peer = Peer::start(wire, Behavior::Greet, Config::default()).await;
         let mut spec = Spec::json(Bytes::from_static(JSON));
         spec.method = method;
-        check_error(&peer.send(spec).await, 405, case);
+        let reply = peer.send(spec).await;
+        check_error(&reply, 405, case);
+        assert_eq!(reply.headers["allow"], "POST", "{case}");
         peer.finish().await;
     }
 }
@@ -553,9 +558,7 @@ async fn oversize_and_decompression_bomb_return_413(wire: Wire) {
         let mut peer = Peer::start(
             wire,
             Behavior::Greet,
-            Config {
-                max_request_bytes: 256,
-            },
+            Config::new().with_max_request_bytes(256),
         )
         .await;
         check_success(
@@ -578,9 +581,7 @@ async fn oversize_and_decompression_bomb_return_413(wire: Wire) {
         let mut peer = Peer::start(
             wire,
             Behavior::Greet,
-            Config {
-                max_request_bytes: 256,
-            },
+            Config::new().with_max_request_bytes(256),
         )
         .await;
         check_error(

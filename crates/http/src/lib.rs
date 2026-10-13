@@ -21,7 +21,9 @@ pub use metadata::is_reserved_header;
 pub use response::to_http;
 
 /// The bare HTTP message codec, independent of message schemas.
+/// Handlers must return an error for unknown variants.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Encoding {
     /// A single JSON value extracted from a one-element request array.
     Json,
@@ -43,6 +45,7 @@ impl Encoding {
 
 /// Shared call semantics and received Triple fields.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CallContext {
     /// Absolute monotonic deadline; absence means unlimited time.
     pub deadline: Option<Deadline>,
@@ -75,9 +78,23 @@ pub trait UnaryHandler: Send + Sync {
 
 /// Encoded and decoded request bodies independently obey this byte limit.
 #[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
 pub struct Config {
     /// Maximum request size before and after decompression, inclusive.
     pub max_request_bytes: usize,
+}
+
+impl Config {
+    /// Creates the default configuration with a 4 MiB request limit.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the inclusive limit for both encoded and decompressed request bytes.
+    pub fn with_max_request_bytes(mut self, max_request_bytes: usize) -> Self {
+        self.max_request_bytes = max_request_bytes;
+        self
+    }
 }
 
 impl Default for Config {

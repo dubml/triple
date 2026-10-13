@@ -128,6 +128,7 @@ pub(crate) async fn read_message(
                     break;
                 }
                 append_bounded(&mut decoded, &chunk[..count], limit)?;
+                tokio::task::yield_now().await;
             }
             Ok(Bytes::from(decoded))
         }
