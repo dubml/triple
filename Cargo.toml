@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [workspace]
-members = ["crates/codec"]
+members = ["crates/codec", "crates/headers"]
 resolver = "3"
 
 [workspace.package]
@@ -22,7 +22,10 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+base64 = "0.22"
 bytes = "1"
+http = "1"
+prost = "0.14"
 thiserror = "2"
 
 [workspace.lints.rust]
