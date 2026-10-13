@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [workspace]
-members = ["crates/codec", "crates/headers"]
+members = ["crates/codec", "crates/headers", "crates/transport"]
 resolver = "3"
 
 [workspace.package]
@@ -24,9 +24,12 @@ license = "Apache-2.0"
 [workspace.dependencies]
 base64 = "0.22"
 bytes = "1"
+h2 = "0.4"
 http = "1"
 prost = "0.14"
 thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
