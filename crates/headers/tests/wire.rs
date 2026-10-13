@@ -157,11 +157,17 @@ fn invalid_final_status_fields_and_rich_status_cannot_report_success() {
 #[test]
 fn non_success_http_responses_map_to_fixed_rpc_codes() {
     for (http, rpc) in [
-        (400, Code::Internal),
+        (400, Code::InvalidArgument),
         (401, Code::Unauthenticated),
         (403, Code::PermissionDenied),
         (404, Code::Unimplemented),
+        (408, Code::DeadlineExceeded),
+        (409, Code::Aborted),
+        (412, Code::FailedPrecondition),
+        (413, Code::ResourceExhausted),
+        (415, Code::Internal),
         (429, Code::Unavailable),
+        (431, Code::ResourceExhausted),
         (502, Code::Unavailable),
         (503, Code::Unavailable),
         (504, Code::Unavailable),

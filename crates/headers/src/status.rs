@@ -16,76 +16,26 @@
 use crate::{Result, headers};
 use std::fmt;
 
-/// Standard gRPC-compatible RPC status codes.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[repr(u8)]
-pub enum Code {
-    /// Successful completion.
-    Ok = 0,
-    /// Caller cancelled the operation.
-    Cancelled = 1,
-    /// Unknown failure.
-    Unknown = 2,
-    /// Invalid argument.
-    InvalidArgument = 3,
-    /// Deadline expired.
-    DeadlineExceeded = 4,
-    /// Resource not found.
-    NotFound = 5,
-    /// Resource already exists.
-    AlreadyExists = 6,
-    /// Access denied.
-    PermissionDenied = 7,
-    /// Resource limit reached.
-    ResourceExhausted = 8,
-    /// Required precondition failed.
-    FailedPrecondition = 9,
-    /// Operation aborted.
-    Aborted = 10,
-    /// Argument outside range.
-    OutOfRange = 11,
-    /// Method or feature unavailable.
-    Unimplemented = 12,
-    /// Internal protocol failure.
-    Internal = 13,
-    /// Endpoint temporarily unavailable.
-    Unavailable = 14,
-    /// Irrecoverable data loss.
-    DataLoss = 15,
-    /// Invalid or missing credentials.
-    Unauthenticated = 16,
-}
+pub use triple_core::Code;
 
-impl Code {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        Some(match value {
-            "0" => Self::Ok,
-            "1" => Self::Cancelled,
-            "2" => Self::Unknown,
-            "3" => Self::InvalidArgument,
-            "4" => Self::DeadlineExceeded,
-            "5" => Self::NotFound,
-            "6" => Self::AlreadyExists,
-            "7" => Self::PermissionDenied,
-            "8" => Self::ResourceExhausted,
-            "9" => Self::FailedPrecondition,
-            "10" => Self::Aborted,
-            "11" => Self::OutOfRange,
-            "12" => Self::Unimplemented,
-            "13" => Self::Internal,
-            "14" => Self::Unavailable,
-            "15" => Self::DataLoss,
-            "16" => Self::Unauthenticated,
-            _ => return None,
-        })
+pub(crate) fn parse_code(value: &str) -> Code {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Code::Unknown;
     }
+    value
+        .parse::<u8>()
+        .ok()
+        .and_then(|code| Code::try_from(code).ok())
+        .unwrap_or(Code::Unknown)
 }
 
 /// Final RPC status, including an optional encoded `google.rpc.Status` payload.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
 pub struct Status {
-    code: Code,
-    message: String,
+    semantic: triple_core::Status,
     details: Vec<u8>,
 }
 
@@ -93,8 +43,7 @@ impl Status {
     /// Creates a final status from a borrowed human-readable message.
     pub fn new(code: Code, message: &str) -> Self {
         Self {
-            code,
-            message: message.to_owned(),
+            semantic: triple_core::Status::new(code, message),
             details: Vec::new(),
         }
     }
@@ -106,19 +55,19 @@ impl Status {
 
     /// Attaches a valid serialized `google.rpc.Status` matching this non-OK status.
     pub fn with_details(mut self, details: &[u8]) -> Result<Self> {
-        headers::validate_status_details(self.code, details)?;
+        headers::validate_status_details(self.code(), details)?;
         self.details = details.to_vec();
         Ok(self)
     }
 
     /// Returns the RPC status code.
     pub fn code(&self) -> Code {
-        self.code
+        self.semantic.code()
     }
 
     /// Returns the human-readable status message.
     pub fn message(&self) -> &str {
-        &self.message
+        self.semantic.message()
     }
 
     /// Returns the serialized rich-error payload.
@@ -129,6 +78,21 @@ impl Status {
 
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}: {}", self.code, self.message)
+        self.semantic.fmt(f)
+    }
+}
+
+impl AsRef<triple_core::Status> for Status {
+    fn as_ref(&self) -> &triple_core::Status {
+        &self.semantic
+    }
+}
+
+impl From<triple_core::Status> for Status {
+    fn from(semantic: triple_core::Status) -> Self {
+        Self {
+            semantic,
+            details: Vec::new(),
+        }
     }
 }

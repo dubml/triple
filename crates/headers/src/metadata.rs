@@ -35,7 +35,7 @@ use crate::{Error, Result};
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Metadata {
-    pub(crate) headers: HeaderMap,
+    semantic: triple_core::Metadata,
 }
 
 impl Metadata {
@@ -46,34 +46,23 @@ impl Metadata {
 
     /// Appends an ASCII value without replacing existing values.
     pub fn append_ascii(&mut self, name: &str, value: &str) -> Result<()> {
-        let name = metadata_name(name)?;
-        if name.as_str().ends_with("-bin") || !value.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
-            return Err(Error::InvalidHeader("ASCII metadata"));
-        }
-        let value =
-            HeaderValue::from_str(value).map_err(|_| Error::InvalidHeader("metadata value"))?;
-        self.headers.append(name, value);
-        Ok(())
+        metadata_name(name)?;
+        self.semantic
+            .append_ascii(name, value)
+            .map_err(|_| Error::InvalidHeader("ASCII metadata"))
     }
 
     /// Appends binary metadata using unpadded Base64 on the wire.
     pub fn append_binary(&mut self, name: &str, value: &[u8]) -> Result<()> {
-        let name = metadata_name(name)?;
-        if !name.as_str().ends_with("-bin") {
-            return Err(Error::InvalidHeader("binary metadata name"));
-        }
-        let value = HeaderValue::from_str(&STANDARD_NO_PAD.encode(value))
-            .map_err(|_| Error::InvalidHeader("binary metadata value"))?;
-        self.headers.append(name, value);
-        Ok(())
+        metadata_name(name)?;
+        self.semantic
+            .append_binary(name, value)
+            .map_err(|_| Error::InvalidHeader("binary metadata name"))
     }
 
     /// Borrows all ASCII values for one metadata name in their received order.
-    pub fn ascii_values<'a>(&'a self, name: &str) -> impl Iterator<Item = &'a str> {
-        self.headers
-            .get_all(name)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
+    pub fn ascii_values<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
+        self.semantic.ascii_values(name)
     }
 
     /// Decodes binary values, including comma-joined and padded peer values.
@@ -81,12 +70,11 @@ impl Metadata {
         if !name.ends_with("-bin") {
             return Err(Error::InvalidHeader("binary metadata name"));
         }
-        self.headers
-            .get_all(name)
-            .iter()
-            .flat_map(|value| value.as_bytes().split(|b| *b == b','))
-            .map(|value| decode_binary(value.trim_ascii()))
-            .collect()
+        Ok(self
+            .semantic
+            .binary_values(name)
+            .map(<[u8]>::to_vec)
+            .collect())
     }
 
     /// Parses application metadata, excluding reserved protocol fields.
@@ -99,13 +87,45 @@ impl Metadata {
             metadata_name(name.as_str())?;
             if name.as_str().ends_with("-bin") {
                 for part in value.as_bytes().split(|b| *b == b',') {
-                    decode_binary(part.trim_ascii())?;
+                    let decoded = decode_binary(part.trim_ascii())?;
+                    metadata.append_binary(name.as_str(), &decoded)?;
+                }
+            } else if let Ok(value) = value.to_str() {
+                // gRPC permits discarding valid HTTP values outside its ASCII grammar.
+                if value.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+                    metadata.append_ascii(name.as_str(), value)?;
                 }
             }
-            // HeaderName and HeaderValue clones share immutable backing storage.
-            metadata.headers.append(name.clone(), value.clone());
         }
         Ok(metadata)
+    }
+
+    pub(crate) fn to_headers(&self) -> Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        for (name, value) in self.semantic.iter() {
+            let name = metadata_name(name)?;
+            let value = match value {
+                triple_core::MetadataValue::Ascii(value) => HeaderValue::from_str(value),
+                triple_core::MetadataValue::Binary(value) => {
+                    HeaderValue::from_str(&STANDARD_NO_PAD.encode(value))
+                }
+            }
+            .map_err(|_| Error::InvalidHeader("metadata value"))?;
+            headers.append(name, value);
+        }
+        Ok(headers)
+    }
+}
+
+impl AsRef<triple_core::Metadata> for Metadata {
+    fn as_ref(&self) -> &triple_core::Metadata {
+        &self.semantic
+    }
+}
+
+impl From<triple_core::Metadata> for Metadata {
+    fn from(semantic: triple_core::Metadata) -> Self {
+        Self { semantic }
     }
 }
 

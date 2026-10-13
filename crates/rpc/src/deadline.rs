@@ -19,16 +19,15 @@ use tokio::time::Instant;
 use crate::{Error, Result};
 
 /// An absolute deadline; forwarding it does not reset the timeout budget.
-#[derive(Debug, Copy, Clone)]
-pub struct Deadline(Instant);
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Deadline(triple_core::Deadline);
 
 impl Deadline {
     /// Creates a deadline relative to the current monotonic time.
     pub fn after(duration: Duration) -> Result<Self> {
-        Instant::now()
-            .checked_add(duration)
+        triple_core::Deadline::after_at(duration, Instant::now().into_std())
             .map(Self)
-            .ok_or(Error::InvalidHeader("grpc-timeout overflow"))
+            .map_err(|_| Error::InvalidHeader("grpc-timeout overflow"))
     }
 
     /// Parses the six gRPC units and at most eight decimal digits.
@@ -59,7 +58,8 @@ impl Deadline {
     pub fn to_header(self) -> Result<String> {
         let nanos = self
             .0
-            .checked_duration_since(Instant::now())
+            .instant()
+            .checked_duration_since(Instant::now().into_std())
             .ok_or(Error::DeadlineExceeded)?
             .as_nanos();
         for (unit, divisor) in [
@@ -79,6 +79,18 @@ impl Deadline {
     }
 
     pub(crate) fn instant(self) -> Instant {
-        self.0
+        Instant::from_std(self.0.instant())
+    }
+}
+
+impl From<triple_core::Deadline> for Deadline {
+    fn from(deadline: triple_core::Deadline) -> Self {
+        Self(deadline)
+    }
+}
+
+impl From<Deadline> for triple_core::Deadline {
+    fn from(deadline: Deadline) -> Self {
+        deadline.0
     }
 }

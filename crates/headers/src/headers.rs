@@ -78,16 +78,9 @@ pub fn check_response_headers(headers: &HeaderMap, limit: usize) -> Result<()> {
 
 /// Validates a case-sensitive `/Service/Method` path without a query or fragment.
 pub fn validate_path(path: &str) -> Result<()> {
-    let mut parts = path.split('/');
-    if parts.next() != Some("")
-        || parts.next().is_none_or(str::is_empty)
-        || parts.next().is_none_or(str::is_empty)
-        || parts.next().is_some()
-        || path.contains(['?', '#'])
-    {
-        return Err(Error::InvalidHeader("RPC path"));
-    }
-    Ok(())
+    triple_core::Path::parse(path)
+        .map(|_| ())
+        .map_err(|_| Error::InvalidHeader("RPC path"))
 }
 
 /// Builds Protobuf request headers with an optional caller-validated timeout value.
@@ -96,7 +89,7 @@ pub fn request_headers(
     timeout: Option<&str>,
     limit: usize,
 ) -> Result<HeaderMap> {
-    let mut headers = metadata.headers.clone();
+    let mut headers = metadata.to_headers()?;
     headers.insert(
         "content-type",
         HeaderValue::from_static("application/grpc+proto"),
@@ -156,7 +149,7 @@ pub fn validate_encoding(headers: &HeaderMap) -> Result<()> {
 
 /// Builds leading Protobuf response headers, preserving application metadata.
 pub fn response_headers(metadata: &Metadata, limit: usize) -> Result<HeaderMap> {
-    let mut headers = metadata.headers.clone();
+    let mut headers = metadata.to_headers()?;
     headers.insert(
         "content-type",
         HeaderValue::from_static("application/grpc+proto"),
@@ -168,7 +161,7 @@ pub fn response_headers(metadata: &Metadata, limit: usize) -> Result<HeaderMap> 
 /// Builds final status trailers with application metadata and optional rich details.
 pub fn status_headers(status: &Status, metadata: &Metadata, limit: usize) -> Result<HeaderMap> {
     validate_status_details(status.code(), status.details())?;
-    let mut headers = metadata.headers.clone();
+    let mut headers = metadata.to_headers()?;
     headers.insert(
         "grpc-status",
         HeaderValue::from_str(&(status.code() as u8).to_string())
@@ -194,7 +187,7 @@ pub fn status_headers(status: &Status, metadata: &Metadata, limit: usize) -> Res
 pub fn parse_status(headers: &HeaderMap, limit: usize) -> Result<Status> {
     check_headers(headers, limit)?;
     let code = one(headers, "grpc-status")?.ok_or(Error::MissingStatus)?;
-    let code = Code::parse(code).unwrap_or(Code::Unknown);
+    let code = crate::status::parse_code(code);
     let message = one(headers, "grpc-message")?
         .map(decode_message)
         .unwrap_or_default();
@@ -208,14 +201,7 @@ pub fn parse_status(headers: &HeaderMap, limit: usize) -> Result<Status> {
 
 /// Maps an HTTP error response to its fallback RPC status.
 pub fn http_error(status: StatusCode) -> Status {
-    let code = match status.as_u16() {
-        400 => Code::Internal,
-        401 => Code::Unauthenticated,
-        403 => Code::PermissionDenied,
-        404 => Code::Unimplemented,
-        429 | 502 | 503 | 504 => Code::Unavailable,
-        _ => Code::Unknown,
-    };
+    let code = Code::from_http(status.as_u16());
     Status::new(code, &format!("HTTP status {status}"))
 }
 
@@ -312,7 +298,8 @@ mod tests {
         assert_eq!(encoded["grpc-message"], "denied: %E6%B5%8B%E8%AF%95 %25");
         assert_eq!(encoded["grpc-status-details-bin"], "CAc");
         for number in 0..=16 {
-            assert!(Code::parse(&number.to_string()).is_some());
+            let expected = Code::try_from(number).unwrap();
+            assert_eq!(crate::status::parse_code(&number.to_string()), expected);
         }
         assert_eq!(
             parse_status(&HeaderMap::new(), 8192)

@@ -383,6 +383,7 @@ dependencies = [
  "http",
  "prost",
  "thiserror",
+ "triple-core",
 ]
 
 [[package]]
@@ -879,6 +880,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "transport",
+ "triple-core",
 ]
 
 [[package]]
@@ -1332,6 +1334,13 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "triple-core"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
