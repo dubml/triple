@@ -1,0 +1,23 @@
+[package]
+name = "triple-http"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+triple-core = { path = "../core" }
+headers = { path = "../headers" }
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+http.workspace = true
+http-body-util = "0.1"
+bytes.workspace = true
+serde_json = { version = "1", features = ["raw_value"] }
+flate2 = "1"
+tokio.workspace = true
+
+[dev-dependencies]
+hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
+prost.workspace = true
+
+[lints]
+workspace = true
