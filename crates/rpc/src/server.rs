@@ -19,8 +19,8 @@ use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    CancellationToken, Error, Incoming, Limits, Metadata, Outgoing, Result, Service, Status,
-    stream::SendRole,
+    CancellationToken, Deadline, Error, Incoming, Limits, Metadata, Outgoing, Result, Service,
+    Status, context::Context, stream::SendRole,
 };
 
 /// Serves all RPC modes on one HTTP/2 connection, using the transport's owned lifecycle.
@@ -60,29 +60,38 @@ async fn handle_call<S: Service>(
         .uri()
         .path_and_query()
         .map_or("", |value| value.as_str());
-    if let Err(error) = headers::validate_request(
+    let deadline = match headers::validate_request(
         request.method(),
         path,
         request.headers(),
         limits.max_header_size,
-    ) {
-        if matches!(error, headers::Error::InvalidHeader("content-type")) {
-            responder
-                .send_response(
-                    Response::builder()
-                        .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
-                        .body(())?,
-                    true,
-                )
-                .map_err(transport::Error::from)?;
-            return Ok(());
+    )
+    .map_err(Error::from)
+    .and_then(|value| value.map(Deadline::from_header).transpose())
+    {
+        Ok(deadline) => deadline,
+        Err(error) => {
+            if matches!(
+                error,
+                Error::Headers(headers::Error::InvalidHeader("content-type"))
+            ) {
+                responder
+                    .send_response(
+                        Response::builder()
+                            .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+                            .body(())?,
+                        true,
+                    )
+                    .map_err(transport::Error::from)?;
+                return Ok(());
+            }
+            return immediate_error(
+                &mut responder,
+                &crate::CallError::into_status(error),
+                limits,
+            );
         }
-        return immediate_error(
-            &mut responder,
-            &crate::CallError::into_status(Error::from(error)),
-            limits,
-        );
-    }
+    };
     let kind = match crate::resolve_method(service.kind(request.uri().path())) {
         Ok(kind) => kind,
         Err(status) => return immediate_error(&mut responder, &status, limits),
@@ -98,13 +107,18 @@ async fn handle_call<S: Service>(
         }
     };
     let path = request.uri().path().to_owned();
+    let context = Context {
+        deadline,
+        cancellation: CancellationToken::new(),
+    };
     let mut incoming = Incoming::new(
         request.into_body(),
         metadata,
         limits,
         kind.single_request(),
         false,
-    );
+    )
+    .with_context(context.clone());
     let response_metadata = match service.response_metadata(&path, incoming.metadata()) {
         Ok(metadata) => metadata,
         Err(error) => {
@@ -121,11 +135,12 @@ async fn handle_call<S: Service>(
     let stream = responder
         .send_response(response, false)
         .map_err(transport::Error::from)?;
-    let mut outgoing = Outgoing::new(stream, limits, kind.single_response(), SendRole::Response);
+    let mut outgoing = Outgoing::new(stream, limits, kind.single_response(), SendRole::Response)
+        .with_context(context.clone());
     let reset = outgoing.reset_signal();
     let result = tokio::select! {
-        result = crate::invoke_service(service, &path, kind, &mut incoming, &mut outgoing) => result,
-        _ = reset => { outgoing.reset(); return Ok(()); }
+        result = context.run(crate::invoke_service(service, &path, kind, &mut incoming, &mut outgoing)) => result,
+        _ = reset => { context.cancellation.cancel(); outgoing.reset(); return Ok(()); }
     };
     crate::finish_call(&mut outgoing, result)
 }

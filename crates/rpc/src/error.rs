@@ -43,6 +43,18 @@ pub enum Error {
     /// Building an HTTP request or response failed.
     #[error("HTTP error: {0}")]
     Http(#[from] http::Error),
+    /// Socket or TLS I/O failed.
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    /// TLS configuration or peer authentication failed.
+    #[error("TLS error: {0}")]
+    Tls(#[from] tokio_rustls::rustls::Error),
+    /// The local or propagated deadline expired.
+    #[error("RPC deadline exceeded")]
+    DeadlineExceeded,
+    /// The caller cancelled the RPC.
+    #[error("RPC cancelled")]
+    Cancelled,
     /// Method message cardinality is invalid.
     #[error("expected exactly one {0} message")]
     Cardinality(&'static str),
@@ -79,7 +91,9 @@ impl CallError for Error {
             | Self::Transport(transport::Error::InvalidConfig(_)) => Code::InvalidArgument,
             Self::Cardinality("response" | "outgoing") => Code::Internal,
             Self::Cardinality(_) => Code::InvalidArgument,
-            Self::Transport(transport::Error::Io(_)) => Code::Unavailable,
+            Self::Transport(transport::Error::Io(_)) | Self::Io(_) => Code::Unavailable,
+            Self::DeadlineExceeded => Code::DeadlineExceeded,
+            Self::Cancelled => Code::Cancelled,
             Self::Transport(transport::Error::Transport(ref error)) => match error.reason() {
                 Some(h2::Reason::CANCEL) => Code::Cancelled,
                 Some(h2::Reason::REFUSED_STREAM) | None => Code::Unavailable,

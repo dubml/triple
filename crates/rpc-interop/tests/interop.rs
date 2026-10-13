@@ -20,7 +20,7 @@
 mod common;
 
 use common::{Echo, spawn_server};
-use rpc::{Call, Client, Code, Error, Limits, Metadata, RpcKind};
+use rpc::{Call, CallOptions, Client, Code, Deadline, Error, Limits, RpcKind};
 use rpc_interop::{
     TonicEcho,
     proto::{EchoMessage, echo_client::EchoClient, echo_server::EchoServer},
@@ -42,15 +42,18 @@ async fn native_client_to_independent_tonic_server_all_modes() {
             }),
     );
     let mut client = Client::connect(&address, Limits::default()).await.unwrap();
-    let mut options = Metadata::new();
-    options.append_ascii("echo-key", "first").unwrap();
-    options.append_ascii("echo-key", "second").unwrap();
-    options.append_binary("echo-bin", &[1, 2, 255]).unwrap();
+    let mut options = CallOptions::default();
+    options.metadata.append_ascii("echo-key", "first").unwrap();
+    options.metadata.append_ascii("echo-key", "second").unwrap();
+    options
+        .metadata
+        .append_binary("echo-bin", &[1, 2, 255])
+        .unwrap();
     let Call {
         mut requests,
         response,
     } = client
-        .call_stream("/test.Echo/Unary", RpcKind::Unary, &options)
+        .call_with_options("/test.Echo/Unary", RpcKind::Unary, &options)
         .await
         .unwrap();
     requests
@@ -81,7 +84,7 @@ async fn native_client_to_independent_tonic_server_all_modes() {
         mut requests,
         response,
     } = client
-        .call_stream(
+        .call_with_options(
             "/test.Echo/ServerStreaming",
             RpcKind::ServerStreaming,
             &options,
@@ -107,7 +110,7 @@ async fn native_client_to_independent_tonic_server_all_modes() {
         mut requests,
         response,
     } = client
-        .call_stream(
+        .call_with_options(
             "/test.Echo/ClientStreaming",
             RpcKind::ClientStreaming,
             &options,
@@ -128,7 +131,7 @@ async fn native_client_to_independent_tonic_server_all_modes() {
         mut requests,
         response,
     } = client
-        .call_stream("/test.Echo/Bidirectional", RpcKind::Bidirectional, &options)
+        .call_with_options("/test.Echo/Bidirectional", RpcKind::Bidirectional, &options)
         .await
         .unwrap();
     let mut incoming = response.receive().await.unwrap();
@@ -147,7 +150,7 @@ async fn native_client_to_independent_tonic_server_all_modes() {
     requests.close().unwrap();
     assert!(incoming.message::<Echo>().await.unwrap().is_none());
     let error = client
-        .unary::<_, Echo>("/test.Echo/Fail", &Echo { text: "x".into() }, &options)
+        .unary_with_options::<_, Echo>("/test.Echo/Fail", &Echo { text: "x".into() }, &options)
         .await
         .unwrap_err();
     let Error::Rpc(status) = error else {
@@ -156,6 +159,16 @@ async fn native_client_to_independent_tonic_server_all_modes() {
     assert_eq!(status.code(), Code::PermissionDenied);
     assert_eq!(status.message(), "denied: 测试 %");
     assert_eq!(status.details(), &[8, 7]);
+    let options = CallOptions {
+        deadline: Some(Deadline::after(Duration::from_millis(40)).unwrap()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        client
+            .unary_with_options::<_, Echo>("/test.Echo/Slow", &Echo { text: "x".into() }, &options)
+            .await,
+        Err(Error::DeadlineExceeded)
+    ));
     drop(incoming);
     drop(client);
     stop.send(()).unwrap();
@@ -257,6 +270,13 @@ async fn independent_tonic_client_to_native_server_all_modes() {
     assert_eq!(error.code(), tonic::Code::PermissionDenied);
     assert_eq!(error.message(), "denied: 测试 %");
     assert_eq!(error.details(), &[8, 7]);
+    let mut request = tonic::Request::new(EchoMessage { text: "x".into() });
+    request.set_timeout(Duration::from_millis(40));
+    let error = client.slow(request).await.unwrap_err();
+    assert!(matches!(
+        error.code(),
+        tonic::Code::DeadlineExceeded | tonic::Code::Cancelled
+    ));
     drop(incoming);
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(2), server)

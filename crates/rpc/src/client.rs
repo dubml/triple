@@ -18,8 +18,20 @@ use prost::Message;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{
-    Error, Incoming, Limits, Metadata, Outgoing, Result, RpcKind, Status, stream::SendRole,
+    CancellationToken, Deadline, Error, Incoming, Limits, Metadata, Outgoing, Result, RpcKind,
+    Status, context::Context, stream::SendRole,
 };
+
+/// Per-call metadata, absolute deadline and explicit cancellation signal.
+#[derive(Default)]
+pub struct CallOptions {
+    /// Leading metadata sent to the server.
+    pub metadata: Metadata,
+    /// The remaining deadline is propagated to the server.
+    pub deadline: Option<Deadline>,
+    /// Cancelling this token cancels operations awaiting this RPC.
+    pub cancellation: CancellationToken,
+}
 
 /// One native Protobuf client on a multiplexed HTTP/2 connection.
 pub struct Client {
@@ -64,8 +76,40 @@ impl Client {
         kind: RpcKind,
         metadata: &Metadata,
     ) -> Result<Call> {
-        let request = prepare_request(&self.origin, path, metadata, None, self.limits)?;
-        self.transport.ready().await?;
+        self.call_with_options(
+            path,
+            kind,
+            &CallOptions {
+                metadata: metadata.clone(),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Opens an RPC with leading metadata, a propagated deadline and local cancellation.
+    pub async fn call_with_options(
+        &mut self,
+        path: &str,
+        kind: RpcKind,
+        options: &CallOptions,
+    ) -> Result<Call> {
+        headers::validate_path(path)?;
+        let timeout = options.deadline.map(Deadline::to_header).transpose()?;
+        let request = prepare_request(
+            &self.origin,
+            path,
+            &options.metadata,
+            timeout.as_deref(),
+            self.limits,
+        )?;
+        let context = Context {
+            deadline: options.deadline,
+            cancellation: options.cancellation.clone(),
+        };
+        context
+            .run(async { self.transport.ready().await.map_err(Error::from) })
+            .await?;
         let (response, stream) = self.transport.send_request(request, false)?;
         Ok(Call {
             requests: Outgoing::new(
@@ -73,11 +117,13 @@ impl Client {
                 self.limits,
                 kind.single_request(),
                 SendRole::Request,
-            ),
+            )
+            .with_context(context.clone()),
             response: PendingResponse {
                 response,
                 limits: self.limits,
                 single: kind.single_response(),
+                context,
             },
         })
     }
@@ -93,6 +139,21 @@ impl Client {
             mut requests,
             response,
         } = self.call(path, metadata).await?;
+        crate::unary(request, &mut requests, response.receive()).await
+    }
+    /// Invokes one Unary method with deadline and explicit cancellation policy.
+    pub async fn unary_with_options<Q: Message, P: Message + Default>(
+        &mut self,
+        path: &str,
+        request: &Q,
+        options: &CallOptions,
+    ) -> Result<P> {
+        let Call {
+            mut requests,
+            response,
+        } = self
+            .call_with_options(path, RpcKind::Unary, options)
+            .await?;
         crate::unary(request, &mut requests, response.receive()).await
     }
 }
@@ -142,6 +203,7 @@ pub struct PendingResponse {
     response: h2::client::ResponseFuture,
     limits: Limits,
     single: bool,
+    context: Context,
 }
 
 /// Validated leading response fields with optional trailers-only final status.
@@ -182,20 +244,25 @@ impl PendingResponse {
     /// Receives the message reader after checking media type and initial status.
     pub async fn receive(self) -> Result<Incoming> {
         let head = parse_response(
-            self.response.await.map_err(transport::Error::from)?,
+            self.context
+                .run(async {
+                    self.response
+                        .await
+                        .map_err(transport::Error::from)
+                        .map_err(Error::from)
+                })
+                .await?,
             self.limits.max_header_size,
         )?;
         if let Some(status) = head.status {
             let incoming =
-                Incoming::new(head.body, Metadata::new(), self.limits, self.single, true);
+                Incoming::new(head.body, Metadata::new(), self.limits, self.single, true)
+                    .with_context(self.context);
             return Ok(incoming.trailers_only(status, head.metadata));
         }
-        Ok(Incoming::new(
-            head.body,
-            head.metadata,
-            self.limits,
-            self.single,
-            true,
-        ))
+        Ok(
+            Incoming::new(head.body, head.metadata, self.limits, self.single, true)
+                .with_context(self.context),
+        )
     }
 }

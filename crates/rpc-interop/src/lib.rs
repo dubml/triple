@@ -15,7 +15,7 @@
 
 //! Independent Tonic fixture for Triple wire interoperability tests.
 
-use std::pin::Pin;
+use std::{pin::Pin, time::Duration};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
 
@@ -101,5 +101,11 @@ impl Echo for TonicEcho {
             "denied: 测试 %",
             vec![8, 7].into(),
         ))
+    }
+    async fn slow(&self, _request: Request<EchoMessage>) -> Result<Response<EchoMessage>, Status> {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        Ok(Response::new(EchoMessage {
+            text: "late".into(),
+        }))
     }
 }

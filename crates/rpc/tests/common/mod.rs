@@ -35,7 +35,7 @@ impl Service for EchoService {
     }
     fn kind(&self, path: &str) -> Option<RpcKind> {
         Some(match path.strip_prefix("/test.Echo/").unwrap_or("") {
-            "Unary" | "Fail" => RpcKind::Unary,
+            "Unary" | "Fail" | "Slow" => RpcKind::Unary,
             "ServerStreaming" | "EmptyServerStream" => RpcKind::ServerStreaming,
             "ClientStreaming" | "EmptyClientResponse" | "ExtraClientResponse" => {
                 RpcKind::ClientStreaming
@@ -63,6 +63,10 @@ impl Service for EchoService {
         response: &mut Outgoing,
     ) -> Result<()> {
         match path.strip_prefix("/test.Echo/").unwrap_or("") {
+            "Slow" => {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(())
+            }
             "Fail" => Err(Status::new(Code::PermissionDenied, "denied: 测试 %")
                 .with_details(&[8, 7])?
                 .into()),

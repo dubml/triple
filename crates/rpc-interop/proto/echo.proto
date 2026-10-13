@@ -27,4 +27,5 @@ service Echo {
   rpc ClientStreaming(stream EchoMessage) returns (EchoMessage);
   rpc Bidirectional(stream EchoMessage) returns (stream EchoMessage);
   rpc Fail(EchoMessage) returns (EchoMessage);
+  rpc Slow(EchoMessage) returns (EchoMessage);
 }

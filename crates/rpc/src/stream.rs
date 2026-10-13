@@ -13,7 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Code, Error, Limits, Metadata, Result, Status, decode_message, encode_message};
+use crate::context::Context;
+use crate::{
+    Code, Deadline, Error, Limits, Metadata, Result, Status, decode_message, encode_message,
+};
 use bytes::Bytes;
 use h2::{RecvStream, SendStream};
 use prost::Message;
@@ -59,6 +62,7 @@ pub struct Outgoing {
     sent: usize,
     role: SendRole,
     trailers: Metadata,
+    context: Context,
 }
 
 impl Outgoing {
@@ -71,7 +75,19 @@ impl Outgoing {
             sent: 0,
             role,
             trailers: Metadata::new(),
+            context: Context::default(),
         }
+    }
+
+    pub(crate) fn with_context(mut self, context: Context) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// Explicitly cancels pending call operations and resets the stream.
+    pub fn cancel(&mut self) {
+        self.context.cancellation.cancel();
+        self.reset();
     }
 
     /// Sends one message with bounded flow control; dropping a pending send resets the stream.
@@ -80,7 +96,14 @@ impl Outgoing {
             return Err(Error::Cardinality("outgoing"));
         }
         let payload = encode_message(message, self.limits.max_message_size)?;
-        self.sender.send(&payload).await?;
+        let result = self
+            .context
+            .run(async { self.sender.send(&payload).await.map_err(Error::from) })
+            .await;
+        if result.is_err() {
+            self.reset();
+        }
+        result?;
         self.sent += 1;
         Ok(())
     }
@@ -139,6 +162,7 @@ pub struct Incoming {
     received: usize,
     metadata: Metadata,
     trailers: Metadata,
+    context: Context,
 }
 
 impl Incoming {
@@ -159,7 +183,18 @@ impl Incoming {
             received: 0,
             metadata,
             trailers: Metadata::new(),
+            context: Context::default(),
         }
+    }
+
+    pub(crate) fn with_context(mut self, context: Context) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// Returns the absolute deadline for forwarding the remaining downstream budget.
+    pub fn deadline(&self) -> Option<Deadline> {
+        self.context.deadline
     }
 
     /// Attaches a trailers-only final status received in the initial headers.
@@ -214,7 +249,10 @@ impl Incoming {
             }
             ReceiveState::Reading => {}
         }
-        let payload = self.receiver.message().await?;
+        let payload = self
+            .context
+            .run(async { self.receiver.message().await.map_err(Error::from) })
+            .await?;
         if let Some(payload) = payload {
             if self.single && self.received != 0 {
                 return Err(Error::Cardinality("incoming"));

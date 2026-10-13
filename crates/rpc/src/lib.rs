@@ -16,19 +16,23 @@
 //! Native Protobuf RPC dispatch and calls over the Triple HTTP/2 transport.
 //!
 //! Unary and all three streaming modes share a bounded message state machine.
-//! Deadline enforcement and TLS configuration remain
-//! outside this crate at this migration stage.
+//! Deadlines, explicit cancellation, TLS/mTLS and graceful shutdown are supported.
 
 mod client;
+mod context;
+mod deadline;
 mod error;
 mod kernel;
 mod message;
 mod server;
 mod stream;
+mod tls;
 
 pub use client::{
-    Call, Client, PendingResponse, ResponseHead, parse_origin, parse_response, prepare_request,
+    Call, CallOptions, Client, PendingResponse, ResponseHead, parse_origin, parse_response,
+    prepare_request,
 };
+pub use deadline::Deadline;
 pub use error::{Error, Result};
 pub use headers::{Code, Metadata, Status};
 pub use kernel::{
@@ -38,3 +42,6 @@ pub use message::{decode_message, encode_message};
 pub use server::{immediate_error, serve_connection};
 pub use stream::{Incoming, Outgoing, RpcKind, SendRole};
 pub use transport::{CancellationToken, Limits};
+
+pub use tls::{Identity, client_tls_config, serve_tls_connection, server_tls_config};
+pub use tokio_rustls::rustls;

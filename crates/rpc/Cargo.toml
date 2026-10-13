@@ -30,6 +30,10 @@ http.workspace = true
 prost.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
+
+[dev-dependencies]
+rcgen = "0.14"
 
 [lints]
 workspace = true
