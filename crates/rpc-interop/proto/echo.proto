@@ -23,5 +23,8 @@ message EchoMessage {
 
 service Echo {
   rpc Unary(EchoMessage) returns (EchoMessage);
+  rpc ServerStreaming(EchoMessage) returns (stream EchoMessage);
+  rpc ClientStreaming(stream EchoMessage) returns (EchoMessage);
+  rpc Bidirectional(stream EchoMessage) returns (stream EchoMessage);
   rpc Fail(EchoMessage) returns (EchoMessage);
 }

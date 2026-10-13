@@ -115,35 +115,37 @@ async fn bad_request_frames_and_cardinality_return_final_rpc_errors() {
     };
     let (address, stop, server) = spawn_server(limits).await.unwrap();
     let mut client = raw_client(&address).await;
-    for (wire, expected) in [
-        (vec![], "3"),
-        (vec![0, 0, 0, 0, 1, 255], "3"),
-        (vec![1, 0, 0, 0, 0], "12"),
-        (vec![2, 0, 0, 0, 0], "13"),
-        (vec![0, 0, 0, 0, 9], "8"),
-        (vec![0, 0, 0, 0, 2, 10], "13"),
-        (vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "3"),
-    ] {
-        poll_fn(|cx| client.sender.poll_ready(cx)).await.unwrap();
-        let request = Request::builder()
-            .method("POST")
-            .uri(format!("http://{address}/test.Echo/Unary"))
-            .header("content-type", "application/grpc+proto")
-            .header("te", "trailers")
-            .body(())
-            .unwrap();
-        let (response, mut send) = client.sender.send_request(request, false).unwrap();
-        send.send_data(Bytes::from(wire), true).unwrap();
-        let mut response = response.await.unwrap().into_body();
-        while let Some(data) = response.data().await {
-            let data = data.unwrap();
-            response
-                .flow_control()
-                .release_capacity(data.len())
+    for method in ["Unary", "ServerStreaming"] {
+        for (wire, expected) in [
+            (vec![], "3"),
+            (vec![0, 0, 0, 0, 1, 255], "3"),
+            (vec![1, 0, 0, 0, 0], "12"),
+            (vec![2, 0, 0, 0, 0], "13"),
+            (vec![0, 0, 0, 0, 9], "8"),
+            (vec![0, 0, 0, 0, 2, 10], "13"),
+            (vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "3"),
+        ] {
+            poll_fn(|cx| client.sender.poll_ready(cx)).await.unwrap();
+            let request = Request::builder()
+                .method("POST")
+                .uri(format!("http://{address}/test.Echo/{method}"))
+                .header("content-type", "application/grpc+proto")
+                .header("te", "trailers")
+                .body(())
                 .unwrap();
+            let (response, mut send) = client.sender.send_request(request, false).unwrap();
+            send.send_data(Bytes::from(wire), true).unwrap();
+            let mut response = response.await.unwrap().into_body();
+            while let Some(data) = response.data().await {
+                let data = data.unwrap();
+                response
+                    .flow_control()
+                    .release_capacity(data.len())
+                    .unwrap();
+            }
+            let trailers = response.trailers().await.unwrap().unwrap();
+            assert_eq!(trailers["grpc-status"], expected);
         }
-        let trailers = response.trailers().await.unwrap().unwrap();
-        assert_eq!(trailers["grpc-status"], expected);
     }
     drop(client);
     stop.cancel();

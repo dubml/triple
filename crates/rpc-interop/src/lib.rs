@@ -15,7 +15,9 @@
 
 //! Independent Tonic fixture for Triple wire interoperability tests.
 
-use tonic::{Request, Response, Status};
+use std::pin::Pin;
+use tokio_stream::{Stream, wrappers::ReceiverStream};
+use tonic::{Request, Response, Status, Streaming};
 
 /// Generated fixture messages, client and server bindings.
 #[allow(missing_docs)]
@@ -25,17 +27,72 @@ pub mod proto {
 
 use proto::{EchoMessage, echo_server::Echo};
 
+type EchoStream = Pin<Box<dyn Stream<Item = Result<EchoMessage, Status>> + Send>>;
+
 /// Tonic's native gRPC server; no Triple implementation code is used here.
 #[derive(Default)]
 pub struct TonicEcho;
 
 #[tonic::async_trait]
 impl Echo for TonicEcho {
+    type ServerStreamingStream = EchoStream;
+    type BidirectionalStream = EchoStream;
+
     async fn unary(&self, request: Request<EchoMessage>) -> Result<Response<EchoMessage>, Status> {
         let (metadata, _, message) = request.into_parts();
         let mut response = Response::new(message);
         *response.metadata_mut() = metadata;
         Ok(response)
+    }
+
+    async fn server_streaming(
+        &self,
+        request: Request<EchoMessage>,
+    ) -> Result<Response<EchoStream>, Status> {
+        let message = request.into_inner();
+        let messages = ["0", "1", "2"].map(|suffix| {
+            Ok(EchoMessage {
+                text: format!("{}:{suffix}", message.text),
+            })
+        });
+        Ok(Response::new(Box::pin(tokio_stream::iter(messages))))
+    }
+
+    async fn client_streaming(
+        &self,
+        request: Request<Streaming<EchoMessage>>,
+    ) -> Result<Response<EchoMessage>, Status> {
+        let mut incoming = request.into_inner();
+        let mut text = String::new();
+        while let Some(message) = incoming.message().await? {
+            text.push_str(&message.text);
+        }
+        Ok(Response::new(EchoMessage { text }))
+    }
+
+    async fn bidirectional(
+        &self,
+        request: Request<Streaming<EchoMessage>>,
+    ) -> Result<Response<EchoStream>, Status> {
+        let mut incoming = request.into_inner();
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            loop {
+                match incoming.message().await {
+                    Ok(Some(message)) => {
+                        if sender.send(Ok(message)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = sender.send(Err(error)).await;
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 
     async fn fail(&self, _request: Request<EchoMessage>) -> Result<Response<EchoMessage>, Status> {

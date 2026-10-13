@@ -15,8 +15,8 @@
 
 #![allow(missing_docs, dead_code)]
 use rpc::{
-    CancellationToken, Code, Error, Incoming, Limits, Metadata, Outgoing, Result, Service, Status,
-    serve_connection,
+    CancellationToken, Code, Error, Incoming, Limits, Metadata, Outgoing, Result, RpcKind, Service,
+    Status, serve_connection,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -31,8 +31,20 @@ pub struct Echo {
 pub struct EchoService;
 impl Service for EchoService {
     fn contains(&self, path: &str) -> bool {
-        matches!(path, "/test.Echo/Unary" | "/test.Echo/Fail")
+        self.kind(path).is_some()
     }
+    fn kind(&self, path: &str) -> Option<RpcKind> {
+        Some(match path.strip_prefix("/test.Echo/").unwrap_or("") {
+            "Unary" | "Fail" => RpcKind::Unary,
+            "ServerStreaming" | "EmptyServerStream" => RpcKind::ServerStreaming,
+            "ClientStreaming" | "EmptyClientResponse" | "ExtraClientResponse" => {
+                RpcKind::ClientStreaming
+            }
+            "Bidirectional" | "StreamFail" => RpcKind::Bidirectional,
+            _ => return None,
+        })
+    }
+
     fn response_metadata(&self, _path: &str, request: &Metadata) -> Result<Metadata> {
         let mut response = Metadata::new();
         for value in request.ascii_values("echo-key") {
@@ -50,18 +62,83 @@ impl Service for EchoService {
         request: &mut Incoming,
         response: &mut Outgoing,
     ) -> Result<()> {
-        if path == "/test.Echo/Fail" {
-            return Err(Status::new(Code::PermissionDenied, "denied: 测试 %")
+        match path.strip_prefix("/test.Echo/").unwrap_or("") {
+            "Fail" => Err(Status::new(Code::PermissionDenied, "denied: 测试 %")
                 .with_details(&[8, 7])?
-                .into());
+                .into()),
+            "StreamFail" => {
+                let message = request
+                    .message::<Echo>()
+                    .await?
+                    .ok_or(Error::Cardinality("request"))?;
+                response.send(&message).await?;
+                response
+                    .trailers_mut()
+                    .append_ascii("failure-key", "last")?;
+                Err(Status::new(Code::PermissionDenied, "stream failed").into())
+            }
+            "Unary" => {
+                let message = request
+                    .message::<Echo>()
+                    .await?
+                    .ok_or(Error::Cardinality("request"))?;
+                response.send(&message).await
+            }
+            "EmptyServerStream" => {
+                request
+                    .message::<Echo>()
+                    .await?
+                    .ok_or(Error::Cardinality("request"))?;
+                Ok(())
+            }
+            "EmptyClientResponse" | "ExtraClientResponse" => {
+                while request.message::<Echo>().await?.is_some() {}
+                if path.ends_with("ExtraClientResponse") {
+                    response
+                        .send(&Echo {
+                            text: "first".into(),
+                        })
+                        .await?;
+                    response
+                        .send(&Echo {
+                            text: "extra".into(),
+                        })
+                        .await?;
+                }
+                Ok(())
+            }
+            "ServerStreaming" => {
+                let message = request
+                    .message::<Echo>()
+                    .await?
+                    .ok_or(Error::Cardinality("request"))?;
+                for suffix in ["0", "1", "2"] {
+                    response
+                        .send(&Echo {
+                            text: format!("{}:{suffix}", message.text),
+                        })
+                        .await?;
+                }
+                Ok(())
+            }
+            "ClientStreaming" => {
+                let mut text = String::new();
+                while let Some(message) = request.message::<Echo>().await? {
+                    text.push_str(&message.text);
+                }
+                response.send(&Echo { text }).await
+            }
+            "Bidirectional" => {
+                while let Some(message) = request.message::<Echo>().await? {
+                    response.send(&message).await?;
+                }
+                Ok(())
+            }
+            _ => Err(Status::new(Code::Unimplemented, "unknown method").into()),
         }
-        let message = request
-            .message::<Echo>()
-            .await?
-            .ok_or(Error::Cardinality("request"))?;
-        response.send(&message).await
     }
 }
+
 pub async fn spawn_server(
     limits: Limits,
 ) -> Result<(String, CancellationToken, JoinHandle<Result<()>>)> {

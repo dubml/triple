@@ -23,7 +23,7 @@ use crate::{
     stream::SendRole,
 };
 
-/// Serves Unary RPCs on one HTTP/2 connection, using the transport's owned lifecycle.
+/// Serves all RPC modes on one HTTP/2 connection, using the transport's owned lifecycle.
 pub async fn serve_connection<T, S>(
     io: T,
     service: Arc<S>,
@@ -83,10 +83,10 @@ async fn handle_call<S: Service>(
             limits,
         );
     }
-    if let Err(status) = crate::resolve_method(service.contains(request.uri().path()).then_some(()))
-    {
-        return immediate_error(&mut responder, &status, limits);
-    }
+    let kind = match crate::resolve_method(service.kind(request.uri().path())) {
+        Ok(kind) => kind,
+        Err(status) => return immediate_error(&mut responder, &status, limits),
+    };
     let metadata = match Metadata::from_headers(request.headers()) {
         Ok(metadata) => metadata,
         Err(error) => {
@@ -98,7 +98,13 @@ async fn handle_call<S: Service>(
         }
     };
     let path = request.uri().path().to_owned();
-    let mut incoming = Incoming::new(request.into_body(), metadata, limits, false);
+    let mut incoming = Incoming::new(
+        request.into_body(),
+        metadata,
+        limits,
+        kind.single_request(),
+        false,
+    );
     let response_metadata = match service.response_metadata(&path, incoming.metadata()) {
         Ok(metadata) => metadata,
         Err(error) => {
@@ -115,10 +121,10 @@ async fn handle_call<S: Service>(
     let stream = responder
         .send_response(response, false)
         .map_err(transport::Error::from)?;
-    let mut outgoing = Outgoing::new(stream, limits, SendRole::Response);
+    let mut outgoing = Outgoing::new(stream, limits, kind.single_response(), SendRole::Response);
     let reset = outgoing.reset_signal();
     let result = tokio::select! {
-        result = crate::invoke_service(service, &path, &mut incoming, &mut outgoing) => result,
+        result = crate::invoke_service(service, &path, kind, &mut incoming, &mut outgoing) => result,
         _ = reset => { outgoing.reset(); return Ok(()); }
     };
     crate::finish_call(&mut outgoing, result)

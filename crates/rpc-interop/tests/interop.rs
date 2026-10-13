@@ -20,7 +20,7 @@
 mod common;
 
 use common::{Echo, spawn_server};
-use rpc::{Call, Client, Code, Error, Limits, Metadata};
+use rpc::{Call, Client, Code, Error, Limits, Metadata, RpcKind};
 use rpc_interop::{
     TonicEcho,
     proto::{EchoMessage, echo_client::EchoClient, echo_server::EchoServer},
@@ -30,7 +30,7 @@ use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 
 #[tokio::test]
-async fn native_client_to_independent_tonic_server_unary() {
+async fn native_client_to_independent_tonic_server_all_modes() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (stop, stopping) = tokio::sync::oneshot::channel::<()>();
@@ -49,7 +49,10 @@ async fn native_client_to_independent_tonic_server_unary() {
     let Call {
         mut requests,
         response,
-    } = client.call("/test.Echo/Unary", &options).await.unwrap();
+    } = client
+        .call_stream("/test.Echo/Unary", RpcKind::Unary, &options)
+        .await
+        .unwrap();
     requests
         .send(&Echo {
             text: "unary".into(),
@@ -74,6 +77,75 @@ async fn native_client_to_independent_tonic_server_unary() {
         "unary"
     );
     assert!(incoming.message::<Echo>().await.unwrap().is_none());
+    let Call {
+        mut requests,
+        response,
+    } = client
+        .call_stream(
+            "/test.Echo/ServerStreaming",
+            RpcKind::ServerStreaming,
+            &options,
+        )
+        .await
+        .unwrap();
+    requests
+        .send(&Echo {
+            text: "stream".into(),
+        })
+        .await
+        .unwrap();
+    requests.close().unwrap();
+    let mut incoming = response.receive().await.unwrap();
+    for expected in ["stream:0", "stream:1", "stream:2"] {
+        assert_eq!(
+            incoming.message::<Echo>().await.unwrap().unwrap().text,
+            expected
+        );
+    }
+    assert!(incoming.message::<Echo>().await.unwrap().is_none());
+    let Call {
+        mut requests,
+        response,
+    } = client
+        .call_stream(
+            "/test.Echo/ClientStreaming",
+            RpcKind::ClientStreaming,
+            &options,
+        )
+        .await
+        .unwrap();
+    for text in ["a", "b"] {
+        requests.send(&Echo { text: text.into() }).await.unwrap();
+    }
+    requests.close().unwrap();
+    let mut incoming = response.receive().await.unwrap();
+    assert_eq!(
+        incoming.message::<Echo>().await.unwrap().unwrap().text,
+        "ab"
+    );
+    assert!(incoming.message::<Echo>().await.unwrap().is_none());
+    let Call {
+        mut requests,
+        response,
+    } = client
+        .call_stream("/test.Echo/Bidirectional", RpcKind::Bidirectional, &options)
+        .await
+        .unwrap();
+    let mut incoming = response.receive().await.unwrap();
+    for text in ["before-close", "still-open"] {
+        requests.send(&Echo { text: text.into() }).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), incoming.message::<Echo>())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .text,
+            text
+        );
+    }
+    requests.close().unwrap();
+    assert!(incoming.message::<Echo>().await.unwrap().is_none());
     let error = client
         .unary::<_, Echo>("/test.Echo/Fail", &Echo { text: "x".into() }, &options)
         .await
@@ -95,7 +167,7 @@ async fn native_client_to_independent_tonic_server_unary() {
 }
 
 #[tokio::test]
-async fn independent_tonic_client_to_native_server_unary() {
+async fn independent_tonic_client_to_native_server_all_modes() {
     let (address, stop, server) = spawn_server(Limits::default()).await.unwrap();
     let mut client = EchoClient::connect(format!("http://{address}"))
         .await
@@ -134,6 +206,50 @@ async fn independent_tonic_client_to_native_server_unary() {
         &[1, 2, 255]
     );
     assert_eq!(response.into_inner().text, "unary");
+    let mut incoming = client
+        .server_streaming(EchoMessage {
+            text: "stream".into(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    for expected in ["stream:0", "stream:1", "stream:2"] {
+        assert_eq!(incoming.message().await.unwrap().unwrap().text, expected);
+    }
+    assert!(incoming.message().await.unwrap().is_none());
+    let stream = tokio_stream::iter(["a", "b"].map(|text| EchoMessage { text: text.into() }));
+    assert_eq!(
+        client
+            .client_streaming(stream)
+            .await
+            .unwrap()
+            .into_inner()
+            .text,
+        "ab"
+    );
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    let mut incoming = client
+        .bidirectional(tokio_stream::wrappers::ReceiverStream::new(receiver))
+        .await
+        .unwrap()
+        .into_inner();
+    for text in ["before-close", "still-open"] {
+        sender
+            .send(EchoMessage { text: text.into() })
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), incoming.message())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .text,
+            text
+        );
+    }
+    drop(sender);
+    assert!(incoming.message().await.unwrap().is_none());
     let error = client
         .fail(EchoMessage { text: "x".into() })
         .await
@@ -141,6 +257,7 @@ async fn independent_tonic_client_to_native_server_unary() {
     assert_eq!(error.code(), tonic::Code::PermissionDenied);
     assert_eq!(error.message(), "denied: 测试 %");
     assert_eq!(error.details(), &[8, 7]);
+    drop(incoming);
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(2), server)
         .await

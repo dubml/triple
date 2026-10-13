@@ -13,9 +13,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Native Protobuf Unary RPC dispatch and calls over the Triple HTTP/2 transport.
+//! Native Protobuf RPC dispatch and calls over the Triple HTTP/2 transport.
 //!
-//! Streaming RPC methods, deadline enforcement and TLS configuration remain
+//! Unary and all three streaming modes share a bounded message state machine.
+//! Deadline enforcement and TLS configuration remain
 //! outside this crate at this migration stage.
 
 mod client;
@@ -35,5 +36,5 @@ pub use kernel::{
 };
 pub use message::{decode_message, encode_message};
 pub use server::{immediate_error, serve_connection};
-pub use stream::{Incoming, Outgoing};
+pub use stream::{Incoming, Outgoing, RpcKind, SendRole};
 pub use transport::{CancellationToken, Limits};

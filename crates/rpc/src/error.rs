@@ -15,7 +15,7 @@
 
 use crate::{CallError, Code, Status};
 
-/// Errors from Unary RPC fields, message encoding, transport or a remote status.
+/// Errors from RPC fields, message encoding, transport or a remote status.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A message exceeds its configured payload limit.
@@ -43,7 +43,7 @@ pub enum Error {
     /// Building an HTTP request or response failed.
     #[error("HTTP error: {0}")]
     Http(#[from] http::Error),
-    /// Unary message cardinality is invalid.
+    /// Method message cardinality is invalid.
     #[error("expected exactly one {0} message")]
     Cardinality(&'static str),
     /// The remote or local service returned an RPC error status.
@@ -51,7 +51,7 @@ pub enum Error {
     Rpc(#[from] Status),
 }
 
-/// A result with a typed Unary RPC error.
+/// A result with a typed RPC error.
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl CallError for Error {

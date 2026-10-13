@@ -19,25 +19,55 @@ use h2::{RecvStream, SendStream};
 use prost::Message;
 use std::{future::Future, mem};
 
-pub(crate) enum SendRole {
+/// Cardinality of the request and response sides of one RPC.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum RpcKind {
+    /// One request and one response.
+    Unary,
+    /// One request and zero or more responses.
+    ServerStreaming,
+    /// Zero or more requests and one response.
+    ClientStreaming,
+    /// Independently streamed requests and responses.
+    Bidirectional,
+}
+
+impl RpcKind {
+    /// Whether the request side requires exactly one message.
+    pub fn single_request(self) -> bool {
+        matches!(self, Self::Unary | Self::ServerStreaming)
+    }
+    /// Whether the response side requires exactly one message.
+    pub fn single_response(self) -> bool {
+        matches!(self, Self::Unary | Self::ClientStreaming)
+    }
+}
+
+/// Whether a message sender owns the request or response body.
+pub enum SendRole {
+    /// Request DATA ends by half-closing the body.
     Request,
+    /// Response DATA ends with final RPC trailers.
     Response,
 }
 
-/// Sends exactly one Protobuf message with a bounded payload.
+/// Sends bounded Protobuf messages with the method's message cardinality.
 pub struct Outgoing {
     sender: transport::Sender,
     limits: Limits,
+    single: bool,
     sent: usize,
     role: SendRole,
     trailers: Metadata,
 }
 
 impl Outgoing {
-    pub(crate) fn new(stream: SendStream<Bytes>, limits: Limits, role: SendRole) -> Self {
+    /// Wraps an HTTP/2 sender with the cardinality selected by a protocol adapter.
+    pub fn new(stream: SendStream<Bytes>, limits: Limits, single: bool, role: SendRole) -> Self {
         Self {
             sender: transport::Sender::new(stream, limits.max_message_size),
             limits,
+            single,
             sent: 0,
             role,
             trailers: Metadata::new(),
@@ -46,7 +76,7 @@ impl Outgoing {
 
     /// Sends one message with bounded flow control; dropping a pending send resets the stream.
     pub async fn send<M: Message>(&mut self, message: &M) -> Result<()> {
-        if self.sent != 0 {
+        if self.single && self.sent != 0 {
             return Err(Error::Cardinality("outgoing"));
         }
         let payload = encode_message(message, self.limits.max_message_size)?;
@@ -60,7 +90,7 @@ impl Outgoing {
         if matches!(self.role, SendRole::Response) {
             return Err(Error::InvalidHeader("response requires final trailers"));
         }
-        if self.sent != 1 {
+        if self.single && self.sent != 1 {
             return Err(Error::Cardinality("outgoing"));
         }
         Ok(self.sender.close()?)
@@ -71,8 +101,9 @@ impl Outgoing {
         &mut self.trailers
     }
 
-    pub(crate) fn finish(&mut self, status: &Status) -> Result<()> {
-        if status.code() == Code::Ok && self.sent != 1 {
+    /// Sends final response trailers, validating single-response methods.
+    pub fn finish(&mut self, status: &Status) -> Result<()> {
+        if status.code() == Code::Ok && self.single && self.sent != 1 {
             return Err(Error::Cardinality("response"));
         }
         let trailers =
@@ -80,11 +111,13 @@ impl Outgoing {
         Ok(self.sender.finish(trailers)?)
     }
 
-    pub(crate) fn reset(&mut self) {
+    /// Resets this RPC stream, including its independently driven receive side.
+    pub fn reset(&mut self) {
         self.sender.reset();
     }
 
-    pub(crate) fn reset_signal(&self) -> impl Future<Output = Result<()>> + use<> {
+    /// Resolves when the peer resets the stream or its connection closes.
+    pub fn reset_signal(&self) -> impl Future<Output = Result<()>> + use<> {
         let reset = self.sender.reset_signal();
         async move { Ok(reset.await?) }
     }
@@ -96,22 +129,25 @@ enum ReceiveState {
     Closed,
 }
 
-/// Receives exactly one Protobuf message and validates the final RPC status.
+/// Receives bounded Protobuf messages, enforcing cardinality and final status.
 pub struct Incoming {
     receiver: transport::Receiver,
     state: ReceiveState,
     limits: Limits,
     expect_status: bool,
+    single: bool,
     received: usize,
     metadata: Metadata,
     trailers: Metadata,
 }
 
 impl Incoming {
-    pub(crate) fn new(
+    /// Wraps an HTTP/2 body with method cardinality and response-status policy.
+    pub fn new(
         stream: RecvStream,
         metadata: Metadata,
         limits: Limits,
+        single: bool,
         expect_status: bool,
     ) -> Self {
         Self {
@@ -119,16 +155,28 @@ impl Incoming {
             state: ReceiveState::Reading,
             limits,
             expect_status,
+            single,
             received: 0,
             metadata,
             trailers: Metadata::new(),
         }
     }
 
-    pub(crate) fn trailers_only(mut self, status: Status, trailers: Metadata) -> Self {
+    /// Attaches a trailers-only final status received in the initial headers.
+    pub fn trailers_only(mut self, status: Status, trailers: Metadata) -> Self {
         self.state = ReceiveState::TrailersOnly(status);
         self.trailers = trailers;
         self
+    }
+
+    /// Whether another DATA or trailer read may be needed, rather than a stored final state.
+    pub fn is_reading(&self) -> bool {
+        matches!(self.state, ReceiveState::Reading)
+    }
+
+    /// Terminates reads after an adapter's deadline or cancellation failure.
+    pub fn terminate(&mut self) {
+        self.state = ReceiveState::Closed;
     }
 
     /// Borrows the leading application metadata.
@@ -168,7 +216,7 @@ impl Incoming {
         }
         let payload = self.receiver.message().await?;
         if let Some(payload) = payload {
-            if self.received != 0 {
+            if self.single && self.received != 0 {
                 return Err(Error::Cardinality("incoming"));
             }
             self.received += 1;
@@ -195,7 +243,7 @@ impl Incoming {
         if status.code() != Code::Ok {
             return Err(Error::Rpc(status));
         }
-        if self.received != 1 {
+        if self.single && self.received != 1 {
             return Err(Error::Cardinality("incoming"));
         }
         Ok(None)

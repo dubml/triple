@@ -16,9 +16,9 @@
 use prost::Message;
 use std::future::Future;
 
-use crate::{Code, Incoming, Metadata, Outgoing, Status};
+use crate::{Code, Incoming, Metadata, Outgoing, RpcKind, Status};
 
-/// Error policy supplied by a Unary RPC adapter, preserving its native error type.
+/// Error policy supplied by an RPC adapter, preserving its native error type.
 pub trait CallError: Sized {
     /// Creates an error for an invalid single-message side.
     fn cardinality(side: &'static str) -> Self;
@@ -28,7 +28,7 @@ pub trait CallError: Sized {
     fn into_status(self) -> Status;
 }
 
-/// Typed message reader used by the shared Unary call and dispatcher.
+/// Typed message reader used by the shared RPC call and dispatcher.
 pub trait Reader {
     /// The calling protocol layer's error type.
     type Error: CallError;
@@ -38,7 +38,7 @@ pub trait Reader {
     ) -> impl Future<Output = std::result::Result<Option<M>, Self::Error>> + Send;
 }
 
-/// Typed message writer used by the shared Unary call and dispatcher.
+/// Typed message writer used by the shared RPC call and dispatcher.
 pub trait Writer {
     /// The calling protocol layer's error type.
     type Error: CallError;
@@ -53,7 +53,7 @@ pub trait Writer {
     fn finish(&mut self, status: &Status) -> std::result::Result<(), Self::Error>;
 }
 
-/// Service lookup and typed handler interface for Unary RPCs.
+/// Service lookup and typed handler interface for all RPC modes.
 ///
 /// Adapters may supply their own reader/writer types to preserve deadline and
 /// cancellation policy without making this crate depend on that policy.
@@ -64,6 +64,10 @@ where
 {
     /// Returns whether the case-sensitive method path is registered.
     fn contains(&self, path: &str) -> bool;
+    /// Returns the method cardinality; existing Unary dispatchers keep their default.
+    fn kind(&self, path: &str) -> Option<RpcKind> {
+        self.contains(path).then_some(RpcKind::Unary)
+    }
     /// Supplies leading response metadata before the first DATA frame.
     fn response_metadata(
         &self,
@@ -72,7 +76,7 @@ where
     ) -> std::result::Result<Metadata, R::Error> {
         Ok(Metadata::new())
     }
-    /// Handles one request and writes one response; errors become final trailers.
+    /// Handles request and response messages; errors become final trailers.
     fn call(
         &self,
         path: &str,
@@ -116,10 +120,11 @@ where
 #[derive(prost::Message)]
 struct OpaqueMessage {}
 
-/// Calls a registered handler and drains the request to verify Unary cardinality.
+/// Calls a handler and drains single-request methods to verify their cardinality.
 pub async fn invoke_service<S, R, W>(
     service: &S,
     path: &str,
+    kind: RpcKind,
     request: &mut R,
     response: &mut W,
 ) -> std::result::Result<(), R::Error>
@@ -129,7 +134,9 @@ where
     S: Service<R, W>,
 {
     service.call(path, request, response).await?;
-    while request.message::<OpaqueMessage>().await?.is_some() {}
+    if kind.single_request() {
+        while request.message::<OpaqueMessage>().await?.is_some() {}
+    }
     Ok(())
 }
 

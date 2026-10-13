@@ -17,9 +17,11 @@ use http::{Request, Response, StatusCode, Uri};
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{Error, Incoming, Limits, Metadata, Outgoing, Result, Status, stream::SendRole};
+use crate::{
+    Error, Incoming, Limits, Metadata, Outgoing, Result, RpcKind, Status, stream::SendRole,
+};
 
-/// One native Protobuf Unary client on a multiplexed HTTP/2 connection.
+/// One native Protobuf client on a multiplexed HTTP/2 connection.
 pub struct Client {
     transport: transport::Client,
     origin: Uri,
@@ -52,14 +54,30 @@ impl Client {
 
     /// Opens a Unary call with independently driven request and response halves.
     pub async fn call(&mut self, path: &str, metadata: &Metadata) -> Result<Call> {
+        self.call_stream(path, RpcKind::Unary, metadata).await
+    }
+
+    /// Opens any RPC mode with independently driven request and response halves.
+    pub async fn call_stream(
+        &mut self,
+        path: &str,
+        kind: RpcKind,
+        metadata: &Metadata,
+    ) -> Result<Call> {
         let request = prepare_request(&self.origin, path, metadata, None, self.limits)?;
         self.transport.ready().await?;
         let (response, stream) = self.transport.send_request(request, false)?;
         Ok(Call {
-            requests: Outgoing::new(stream, self.limits, SendRole::Request),
+            requests: Outgoing::new(
+                stream,
+                self.limits,
+                kind.single_request(),
+                SendRole::Request,
+            ),
             response: PendingResponse {
                 response,
                 limits: self.limits,
+                single: kind.single_response(),
             },
         })
     }
@@ -111,18 +129,19 @@ pub fn prepare_request(
     Ok(request)
 }
 
-/// Independently driven halves of one Unary call, each constrained to one message.
+/// Independently driven halves of one RPC, constrained by its method cardinality.
 pub struct Call {
-    /// Sends one request then half-closes the request body.
+    /// Sends request messages then half-closes the request body.
     pub requests: Outgoing,
     /// Awaits and validates response headers.
     pub response: PendingResponse,
 }
 
-/// Awaits a Unary response without owning the request sender.
+/// Awaits response headers without owning the request sender.
 pub struct PendingResponse {
     response: h2::client::ResponseFuture,
     limits: Limits,
+    single: bool,
 }
 
 /// Validated leading response fields with optional trailers-only final status.
@@ -167,9 +186,16 @@ impl PendingResponse {
             self.limits.max_header_size,
         )?;
         if let Some(status) = head.status {
-            let incoming = Incoming::new(head.body, Metadata::new(), self.limits, true);
+            let incoming =
+                Incoming::new(head.body, Metadata::new(), self.limits, self.single, true);
             return Ok(incoming.trailers_only(status, head.metadata));
         }
-        Ok(Incoming::new(head.body, head.metadata, self.limits, true))
+        Ok(Incoming::new(
+            head.body,
+            head.metadata,
+            self.limits,
+            self.single,
+            true,
+        ))
     }
 }
