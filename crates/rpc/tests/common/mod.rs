@@ -34,7 +34,7 @@ impl Service for EchoService {
         self.kind(path).is_some()
     }
     fn kind(&self, path: &str) -> Option<RpcKind> {
-        Some(match path.strip_prefix("/test.Echo/").unwrap_or("") {
+        Some(match method(path) {
             "Unary" | "Fail" | "Slow" => RpcKind::Unary,
             "ServerStreaming" | "EmptyServerStream" => RpcKind::ServerStreaming,
             "ClientStreaming" | "EmptyClientResponse" | "ExtraClientResponse" => {
@@ -62,7 +62,7 @@ impl Service for EchoService {
         request: &mut Incoming,
         response: &mut Outgoing,
     ) -> Result<()> {
-        match path.strip_prefix("/test.Echo/").unwrap_or("") {
+        match method(path) {
             "Slow" => {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 Ok(())
@@ -177,4 +177,10 @@ pub async fn spawn_server(
         Ok(())
     });
     Ok((address, shutdown, handle))
+}
+
+fn method(path: &str) -> &str {
+    path.strip_prefix("/test.Echo/")
+        .or_else(|| path.strip_prefix("/org.apache.dubbo.triple.fixture.Echo/"))
+        .unwrap_or("")
 }
