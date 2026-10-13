@@ -32,25 +32,11 @@ impl Deadline {
 
     /// Parses the six gRPC units and at most eight decimal digits.
     pub fn from_header(value: &str) -> Result<Self> {
-        let (unit, digits) = value
-            .as_bytes()
-            .split_last()
-            .ok_or(Error::InvalidHeader("grpc-timeout"))?;
-        if digits.is_empty() || digits.len() > 8 || !digits.iter().all(u8::is_ascii_digit) {
-            return Err(Error::InvalidHeader("grpc-timeout"));
-        }
-        let count = digits
-            .iter()
-            .fold(0_u64, |n, digit| n * 10 + u64::from(digit - b'0'));
-        let duration = match unit {
-            b'H' => Duration::from_secs(count * 3600),
-            b'M' => Duration::from_secs(count * 60),
-            b'S' => Duration::from_secs(count),
-            b'm' => Duration::from_millis(count),
-            b'u' => Duration::from_micros(count),
-            b'n' => Duration::from_nanos(count),
-            _ => return Err(Error::InvalidHeader("grpc-timeout unit")),
-        };
+        let duration = triple_core::parse_grpc_timeout(value).map_err(|error| match error {
+            triple_core::Error::InvalidTimeoutUnit => Error::InvalidHeader("grpc-timeout unit"),
+            triple_core::Error::TimeoutOverflow => Error::InvalidHeader("grpc-timeout overflow"),
+            _ => Error::InvalidHeader("grpc-timeout"),
+        })?;
         Self::after(duration)
     }
 

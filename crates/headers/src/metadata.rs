@@ -36,6 +36,7 @@ use crate::{Error, Result};
 #[derive(Debug, Default, Clone)]
 pub struct Metadata {
     semantic: triple_core::Metadata,
+    discarded_ascii_names: Vec<String>,
 }
 
 impl Metadata {
@@ -90,14 +91,27 @@ impl Metadata {
                     let decoded = decode_binary(part.trim_ascii())?;
                     metadata.append_binary(name.as_str(), &decoded)?;
                 }
-            } else if let Ok(value) = value.to_str() {
-                // gRPC permits discarding valid HTTP values outside its ASCII grammar.
-                if value.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
-                    metadata.append_ascii(name.as_str(), value)?;
+            } else {
+                // gRPC Requests permits discarding an invalid ASCII value that is
+                // valid HTTP. Keep a per-message diagnostic without failing the call.
+                let accepted = value.to_str().ok().is_some_and(|value| {
+                    metadata.semantic.append_ascii(name.as_str(), value).is_ok()
+                });
+                if !accepted {
+                    metadata
+                        .discarded_ascii_names
+                        .push(name.as_str().to_owned());
                 }
             }
         }
         Ok(metadata)
+    }
+
+    /// Borrows the names of discarded ASCII values, one record per dropped entry.
+    ///
+    /// Diagnostics stay in the binding and are never serialized as metadata.
+    pub fn discarded_ascii_names(&self) -> impl Iterator<Item = &str> {
+        self.discarded_ascii_names.iter().map(String::as_str)
     }
 
     pub(crate) fn to_headers(&self) -> Result<HeaderMap> {
@@ -125,7 +139,10 @@ impl AsRef<triple_core::Metadata> for Metadata {
 
 impl From<triple_core::Metadata> for Metadata {
     fn from(semantic: triple_core::Metadata) -> Self {
-        Self { semantic }
+        Self {
+            semantic,
+            discarded_ascii_names: Vec::new(),
+        }
     }
 }
 

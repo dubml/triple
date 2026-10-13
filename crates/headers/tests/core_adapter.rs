@@ -19,7 +19,7 @@ fn metadata_moves_to_binding_and_round_trips_decoded_values() {
 }
 
 #[test]
-fn peer_base64_is_decoded_once_before_entering_core() {
+fn binary_metadata_decodes_on_receive_accepts_padded_and_unpadded() {
     let mut fields = HeaderMap::new();
     fields.append("echo-bin", HeaderValue::from_static("AA==, /w"));
     fields.append("echo-bin", HeaderValue::from_static(""));
@@ -40,6 +40,74 @@ fn peer_base64_is_decoded_once_before_entering_core() {
             .collect::<Vec<_>>(),
         [b"AA".as_slice(), b"/w", b""]
     );
+}
+
+#[test]
+fn grpc_reserved_names_are_filtered_from_custom_metadata() {
+    let mut fields = HeaderMap::new();
+    fields.insert("grpc-timeout", HeaderValue::from_static("1S"));
+    fields.insert("grpc-status", HeaderValue::from_static("0"));
+    fields.insert("grpc-future-bin", HeaderValue::from_static("!"));
+    fields.insert("custom", HeaderValue::from_static("kept"));
+    let metadata = Metadata::from_headers(&fields).unwrap();
+    assert_eq!(metadata.as_ref().iter().count(), 1);
+    assert_eq!(
+        metadata.ascii_values("custom").collect::<Vec<_>>(),
+        ["kept"]
+    );
+    assert!(metadata.ascii_values("grpc-timeout").next().is_none());
+    assert!(metadata.ascii_values("grpc-status").next().is_none());
+    assert!(
+        metadata
+            .as_ref()
+            .binary_values("grpc-future-bin")
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+fn invalid_ascii_metadata_is_discarded_and_recorded_without_request_failure() {
+    for (name, invalid) in [
+        ("horizontal_tab", HeaderValue::from_static("bad\tvalue")),
+        ("non_ascii_octet", HeaderValue::from_bytes(&[255]).unwrap()),
+    ] {
+        let mut fields = HeaderMap::new();
+        fields.append("custom", HeaderValue::from_static("before"));
+        fields.append("custom", invalid);
+        fields.append("custom", HeaderValue::from_static("after"));
+        let metadata = Metadata::from_headers(&fields).unwrap();
+        assert_eq!(
+            metadata.ascii_values("custom").collect::<Vec<_>>(),
+            ["before", "after"],
+            "{name}"
+        );
+        assert_eq!(
+            metadata.discarded_ascii_names().collect::<Vec<_>>(),
+            ["custom"],
+            "{name}"
+        );
+        let encoded = request_headers(&metadata, None, 8192).unwrap();
+        assert_eq!(encoded.get_all("custom").iter().count(), 2, "{name}");
+    }
+}
+
+#[test]
+fn timeout_helpers_delegate_to_shared_core_parsers() {
+    for input in ["1", "3000", "0", "-1", ""] {
+        assert_eq!(
+            headers::parse_tri_service_timeout(input),
+            triple_core::parse_tri_service_timeout(input),
+            "tri: {input}"
+        );
+    }
+    for input in ["1H", "1M", "1S", "1m", "1u", "1n", "0n", "1X", ""] {
+        assert_eq!(
+            headers::parse_grpc_timeout(input),
+            triple_core::parse_grpc_timeout(input),
+            "grpc: {input}"
+        );
+    }
 }
 
 #[test]

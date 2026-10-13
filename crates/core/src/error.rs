@@ -16,6 +16,15 @@ pub enum Error {
     /// The timeout cannot be represented as a monotonic deadline.
     #[error("deadline overflow")]
     DeadlineOverflow,
+    /// A timeout does not satisfy its binding's decimal grammar.
+    #[error("invalid timeout")]
+    InvalidTimeout,
+    /// A gRPC timeout unit is not H, M, S, m, u or n.
+    #[error("invalid timeout unit")]
+    InvalidTimeoutUnit,
+    /// Decimal parsing or duration conversion overflowed.
+    #[error("timeout overflow")]
+    TimeoutOverflow,
     /// The numeric status does not identify a standard RPC code.
     #[error("invalid RPC status code: {0}")]
     InvalidCode(u8),

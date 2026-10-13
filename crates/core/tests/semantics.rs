@@ -6,7 +6,14 @@ use std::time::{Duration, Instant};
 use triple_core::{Code, Deadline, Error, Metadata, MetadataValue, Path, Status};
 
 #[test]
-fn confirmed_http_status_table() {
+fn from_http_returns_unknown_for_500_and_418() {
+    for status in [500, 418] {
+        assert_eq!(Code::from_http(status), Code::Unknown, "HTTP {status}");
+    }
+}
+
+#[test]
+fn from_http_maps_all_14_confirmed_statuses() {
     for (http, expected) in [
         (400, Code::InvalidArgument),
         (401, Code::Unauthenticated),
@@ -28,7 +35,7 @@ fn confirmed_http_status_table() {
 }
 
 #[test]
-fn every_unlisted_http_status_is_unknown_including_200_and_500() {
+fn from_http_returns_unknown_for_every_unlisted_status() {
     let defined = [
         400, 401, 403, 404, 408, 409, 412, 413, 415, 429, 431, 502, 503, 504,
     ];
@@ -79,6 +86,8 @@ fn status_preserves_code_and_message_without_a_wire_format() {
 
 #[test]
 fn paths_borrow_service_and_method_without_case_normalization() {
+    let simple = Path::parse("/svc/method").unwrap();
+    assert_eq!((simple.service(), simple.method()), ("svc", "method"));
     let raw = String::from("/demo.GreetService/Greet");
     let path = Path::parse(&raw).unwrap();
     assert_eq!(path.as_str(), raw);
@@ -90,20 +99,20 @@ fn paths_borrow_service_and_method_without_case_normalization() {
 }
 
 #[test]
-fn malformed_paths_are_rejected() {
-    for path in [
-        "",
-        "/",
-        "Service/Method",
-        "/Service",
-        "//Method",
-        "/Service/",
-        "/Service/Method/",
-        "/Service/Method/Extra",
-        "/Service/Method?query",
-        "/Service/Method#fragment",
+fn path_rejects_named_invalid_cases() {
+    for (name, path) in [
+        ("empty_path", ""),
+        ("only_separator", "/"),
+        ("missing_leading_slash", "svc/method"),
+        ("missing_method", "/svc"),
+        ("empty_service", "//method"),
+        ("empty_method", "/svc/"),
+        ("trailing_separator", "/svc/method/"),
+        ("extra_segment", "/svc/method/extra"),
+        ("query", "/svc/method?query"),
+        ("fragment", "/svc/method#fragment"),
     ] {
-        assert_eq!(Path::parse(path), Err(Error::InvalidPath), "{path}");
+        assert_eq!(Path::parse(path), Err(Error::InvalidPath), "{name}: {path}");
     }
 }
 

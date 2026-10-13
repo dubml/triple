@@ -31,3 +31,4 @@ pub use headers::{
 };
 pub use metadata::Metadata;
 pub use status::{Code, Status};
+pub use triple_core::{parse_grpc_timeout, parse_tri_service_timeout};

@@ -15,7 +15,10 @@ impl Deadline {
         Self::after_at(duration, Instant::now())
     }
 
-    /// Creates a deadline using an explicit clock reading.
+    /// The single duration-to-deadline conversion entry, using an explicit clock.
+    ///
+    /// Both timeout parsers return `Duration`; bindings call this entry once and
+    /// forward the resulting absolute instant without restarting the budget.
     pub fn after_at(duration: Duration, now: Instant) -> Result<Self> {
         now.checked_add(duration)
             .map(Self)

@@ -43,11 +43,11 @@ pub enum Code {
 }
 
 impl Code {
-    /// Maps an HTTP status using the confirmed Triple HTTP RPC mapping.
+    /// Maps only non-200 HTTP responses using the confirmed Triple HTTP RPC mapping.
     ///
     /// Triple specification §3.1.3, HTTP Status / Inferred Code table:
     /// <https://dubbo.apache.org/zh-cn/overview/reference/protocols/triple-spec/>.
-    /// A success response is handled by the binding before applying this fallback.
+    /// A 200 response is handled by the binding before applying this fallback.
     pub fn from_http(status: u16) -> Self {
         match status {
             400 => Self::InvalidArgument,
