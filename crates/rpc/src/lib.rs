@@ -17,11 +17,21 @@
 //!
 //! Unary and all three streaming modes share a bounded message state machine.
 //! Deadlines, explicit cancellation, TLS/mTLS and graceful shutdown are supported.
+//!
+//! With encoded frame length `F` and stream window `W = 65535`, successful
+//! handler sends not yet admitted by the peer window obey
+//! `unsent = max(0, completed * F - W) <= 3 * F`: at most one frame each in h2,
+//! hyper's send pipeline and the bounded channel. These queues stay bounded
+//! while the consumer stalls. Payload storage per stream is bounded by
+//! `W + 3 * max_message_size` (plus framing overhead); a pending handler send
+//! separately owns its message and encoded frame until it completes or drops.
 
+mod backend;
 mod client;
 mod context;
 mod deadline;
 mod error;
+mod hyper_server;
 mod kernel;
 mod message;
 mod server;
@@ -39,7 +49,7 @@ pub use kernel::{
     CallError, Reader, Service, Writer, finish_call, invoke_service, resolve_method, unary,
 };
 pub use message::{decode_message, encode_message};
-pub use server::{immediate_error, serve_connection};
+pub use server::{ResponseBody, handle, immediate_error, serve_connection};
 pub use stream::{Incoming, Outgoing, RpcKind, SendRole};
 pub use transport::{CancellationToken, Limits};
 

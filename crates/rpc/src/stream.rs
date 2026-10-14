@@ -56,7 +56,7 @@ pub enum SendRole {
 
 /// Sends bounded Protobuf messages with the method's message cardinality.
 pub struct Outgoing {
-    sender: transport::Sender,
+    sender: crate::backend::Sender,
     limits: Limits,
     single: bool,
     sent: usize,
@@ -69,7 +69,10 @@ impl Outgoing {
     /// Wraps an HTTP/2 sender with the cardinality selected by a protocol adapter.
     pub fn new(stream: SendStream<Bytes>, limits: Limits, single: bool, role: SendRole) -> Self {
         Self {
-            sender: transport::Sender::new(stream, limits.max_message_size),
+            sender: crate::backend::Sender::H2(transport::Sender::new(
+                stream,
+                limits.max_message_size,
+            )),
             limits,
             single,
             sent: 0,
@@ -82,6 +85,18 @@ impl Outgoing {
     pub(crate) fn with_context(mut self, context: Context) -> Self {
         self.context = context;
         self
+    }
+
+    pub(crate) fn for_hyper(sender: crate::backend::Sender, limits: Limits, single: bool) -> Self {
+        Self {
+            sender,
+            limits,
+            single,
+            sent: 0,
+            role: SendRole::Response,
+            trailers: Metadata::new(),
+            context: Context::default(),
+        }
     }
 
     /// Explicitly cancels pending call operations and resets the stream.
@@ -98,7 +113,11 @@ impl Outgoing {
         let payload = encode_message(message, self.limits.max_message_size)?;
         let result = self
             .context
-            .run(async { self.sender.send(&payload).await.map_err(Error::from) })
+            .run(async {
+                self.sender
+                    .send(&payload, self.limits.max_message_size)
+                    .await
+            })
             .await;
         if result.is_err() {
             self.reset();
@@ -116,7 +135,7 @@ impl Outgoing {
         if self.single && self.sent != 1 {
             return Err(Error::Cardinality("outgoing"));
         }
-        Ok(self.sender.close()?)
+        self.sender.close()
     }
 
     /// Mutably borrows metadata for final server response trailers.
@@ -131,7 +150,7 @@ impl Outgoing {
         }
         let trailers =
             headers::status_headers(status, &self.trailers, self.limits.max_header_size)?;
-        Ok(self.sender.finish(trailers)?)
+        self.sender.finish(trailers)
     }
 
     /// Resets this RPC stream, including its independently driven receive side.
@@ -141,8 +160,7 @@ impl Outgoing {
 
     /// Resolves when the peer resets the stream or its connection closes.
     pub fn reset_signal(&self) -> impl Future<Output = Result<()>> + use<> {
-        let reset = self.sender.reset_signal();
-        async move { Ok(reset.await?) }
+        self.sender.reset_signal()
     }
 }
 
@@ -154,7 +172,7 @@ enum ReceiveState {
 
 /// Receives bounded Protobuf messages, enforcing cardinality and final status.
 pub struct Incoming {
-    receiver: transport::Receiver,
+    receiver: crate::backend::Receiver,
     state: ReceiveState,
     limits: Limits,
     expect_status: bool,
@@ -175,7 +193,10 @@ impl Incoming {
         expect_status: bool,
     ) -> Self {
         Self {
-            receiver: transport::Receiver::new(stream, limits.max_message_size),
+            receiver: crate::backend::Receiver::H2(transport::Receiver::new(
+                stream,
+                limits.max_message_size,
+            )),
             state: ReceiveState::Reading,
             limits,
             expect_status,
@@ -190,6 +211,31 @@ impl Incoming {
     pub(crate) fn with_context(mut self, context: Context) -> Self {
         self.context = context;
         self
+    }
+
+    pub(crate) fn for_hyper(
+        body: hyper::body::Incoming,
+        metadata: Metadata,
+        limits: Limits,
+        single: bool,
+    ) -> Self {
+        Self {
+            receiver: crate::backend::Receiver::Hyper {
+                body,
+                input: Bytes::new(),
+                decoder: codec::FrameDecoder::new(limits.max_message_size),
+                trailers: None,
+                closed: false,
+            },
+            state: ReceiveState::Reading,
+            limits,
+            expect_status: false,
+            single,
+            received: 0,
+            metadata,
+            trailers: Metadata::new(),
+            context: Context::default(),
+        }
     }
 
     /// Returns the absolute deadline for forwarding the remaining downstream budget.
@@ -249,10 +295,7 @@ impl Incoming {
             }
             ReceiveState::Reading => {}
         }
-        let payload = self
-            .context
-            .run(async { self.receiver.message().await.map_err(Error::from) })
-            .await?;
+        let payload = self.context.run(self.receiver.message()).await?;
         if let Some(payload) = payload {
             if self.single && self.received != 0 {
                 return Err(Error::Cardinality("incoming"));

@@ -7,6 +7,19 @@ use rpc::{CancellationToken, Code, Deadline, Error, Limits, Status};
 use rpc_interop::proto::{EchoMessage, echo_client::EchoClient};
 use tokio::net::TcpListener;
 
+struct ExpiredService;
+impl rpc::Service for ExpiredService {
+    fn contains(&self, _: &str) -> bool {
+        true
+    }
+    fn kind(&self, _: &str) -> Option<rpc::RpcKind> {
+        Some(rpc::RpcKind::Unary)
+    }
+    async fn call(&self, _: &str, _: &mut rpc::Incoming, _: &mut rpc::Outgoing) -> rpc::Result<()> {
+        Err(Status::new(Code::DeadlineExceeded, "expired").into())
+    }
+}
+
 #[tokio::test]
 async fn tonic_zero_timeout_reaches_wire_and_native_parser_marks_it_expired() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -16,31 +29,45 @@ async fn tonic_zero_timeout_reaches_wire_and_native_parser_marks_it_expired() {
     let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
     let server = tokio::spawn(async move {
         let (io, _) = listener.accept().await.unwrap();
-        transport::serve_connection(
-            io,
-            move |request, mut responder| {
-                let sent = sent.clone();
-                async move {
-                    let timeout = request.headers()["grpc-timeout"].to_str().unwrap();
-                    let error = Deadline::from_header(timeout)
-                        .unwrap()
-                        .to_header()
-                        .unwrap_err();
-                    assert!(matches!(error, Error::DeadlineExceeded));
-                    sent.send(timeout.to_owned()).unwrap();
-                    let _ = rpc::immediate_error(
-                        &mut responder,
-                        &Status::new(Code::DeadlineExceeded, "expired"),
-                        Limits::default(),
-                    );
-                }
-            },
-            Limits::default(),
-            shutdown,
-            Duration::from_secs(1),
-        )
-        .await
-        .unwrap();
+        let tracker = tokio_util::task::TaskTracker::new();
+        let tasks = tracker.clone();
+        let connection =
+            hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+                .serve_connection(
+                    hyper_util::rt::TokioIo::new(io),
+                    hyper::service::service_fn(
+                        move |request: hyper::Request<hyper::body::Incoming>| {
+                            let sent = sent.clone();
+                            let tasks = tasks.clone();
+                            async move {
+                                let timeout = request.headers()["grpc-timeout"].to_str().unwrap();
+                                let error = Deadline::from_header(timeout)
+                                    .unwrap()
+                                    .to_header()
+                                    .unwrap_err();
+                                assert!(matches!(error, Error::DeadlineExceeded));
+                                sent.send(timeout.to_owned()).unwrap();
+                                rpc::handle(
+                                    request,
+                                    std::sync::Arc::new(ExpiredService),
+                                    Limits::default(),
+                                    tasks,
+                                )
+                                .await
+                            }
+                        },
+                    ),
+                );
+        tokio::pin!(connection);
+        tokio::select! {
+            result = &mut connection => result.unwrap(),
+            _ = shutdown.cancelled() => {
+                connection.as_mut().graceful_shutdown();
+                tokio::time::timeout(Duration::from_secs(1), &mut connection).await.unwrap().unwrap();
+            }
+        }
+        tracker.close();
+        tracker.wait().await;
     });
     let mut client = EchoClient::connect(format!("http://{address}"))
         .await

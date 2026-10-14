@@ -32,6 +32,11 @@ prost.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
+hyper = { version = "1", features = ["http2", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body = "1"
+http-body-util = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
 rcgen = "0.14"
