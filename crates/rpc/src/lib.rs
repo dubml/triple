@@ -25,12 +25,18 @@
 //! while the consumer stalls. Payload storage per stream is bounded by
 //! `W + 3 * max_message_size` (plus framing overhead); a pending handler send
 //! separately owns its message and encoded frame until it completes or drops.
+//! At the default 128 concurrent streams and 4 MiB message limit, this in-flight
+//! bound is 128 * (65535 + 3 * 4 MiB) = 1,619,001,216 bytes; the former server
+//! retained approximately one message per stream, or 536,870,912 bytes total.
+//! This is a design tradeoff: lower `max_message_size` or `max_concurrent_streams`
+//! to tighten it, without counting pending handler messages or other overhead.
 
 mod backend;
 mod client;
 mod context;
 mod deadline;
 mod error;
+mod http2_settings;
 mod hyper_server;
 mod kernel;
 mod message;
@@ -45,6 +51,8 @@ pub use client::{
 pub use deadline::Deadline;
 pub use error::{Error, Result};
 pub use headers::{Code, Metadata, Status};
+pub use http2_settings::{Http2Settings, http2_settings};
+pub use hyper_server::StreamExecutor;
 pub use kernel::{
     CallError, Reader, Service, Writer, finish_call, invoke_service, resolve_method, unary,
 };

@@ -21,11 +21,18 @@ use tokio_util::task::TaskTracker;
 tokio::task_local! { static STREAM_ABORT: CancellationToken; }
 
 #[derive(Clone)]
-struct Executor {
+/// Tracks hyper stream futures and allows cancellation during flow-control waits.
+pub struct StreamExecutor {
     tracker: TaskTracker,
     shutdown: CancellationToken,
 }
-impl<F> hyper::rt::Executor<F> for Executor
+impl StreamExecutor {
+    /// Uses the caller's tracker and connection-stop token for every stream task.
+    pub fn new(tracker: TaskTracker, shutdown: CancellationToken) -> Self {
+        Self { tracker, shutdown }
+    }
+}
+impl<F> hyper::rt::Executor<F> for StreamExecutor
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
@@ -128,6 +135,11 @@ fn immediate(status: &Status, limits: Limits) -> Result<Response<ResponseBody>> 
 }
 
 /// Dispatches one hyper HTTP/2 request; the caller owns and drains the task tracker.
+///
+/// The connection builder must use [`StreamExecutor`] with the same tracker.
+/// Otherwise deadlines and resets cannot interrupt a stream waiting for HTTP/2
+/// capacity: it stays blocked until the peer reads, and closing/waiting on the
+/// tracker does not join those hyper stream futures.
 pub async fn handle<S: Service + 'static>(
     request: Request<hyper::body::Incoming>,
     service: Arc<S>,
@@ -256,31 +268,29 @@ where
     S: Service + 'static,
 {
     let stop = CancellationToken::new();
-    let executor = Executor {
-        tracker: tracker.clone(),
-        shutdown: stop.clone(),
-    };
+    let executor = StreamExecutor::new(tracker.clone(), stop.clone());
     let mut builder = hyper::server::conn::http2::Builder::new(executor);
-    let header_limit = u32::try_from(limits.max_header_size)
+    let settings = crate::http2_settings(limits);
+    let header_limit = u32::try_from(settings.max_header_list_size)
         .map_err(|_| transport::Error::InvalidConfig("header limit"))?;
     // Match transport::server: header limit and concurrent streams are Limits;
     // its fixed h2 defaults are 16384-byte frames and 65535-byte windows.
     builder
         .max_header_list_size(header_limit)
-        .max_concurrent_streams(limits.max_concurrent_streams)
-        .max_frame_size(16_384)
-        .initial_stream_window_size(65_535)
-        .initial_connection_window_size(65_535)
+        .max_concurrent_streams(settings.max_concurrent_streams)
+        .max_frame_size(settings.max_frame_size)
+        .initial_stream_window_size(settings.initial_stream_window_size)
+        .initial_connection_window_size(settings.initial_connection_window_size)
         .adaptive_window(false)
-        .header_table_size(4096)
-        .keep_alive_interval(None)
-        .keep_alive_timeout(Duration::from_secs(20))
-        .max_send_buf_size(65_535)
+        .header_table_size(settings.header_table_size)
+        .keep_alive_interval(settings.keep_alive_interval)
+        .keep_alive_timeout(settings.keep_alive_timeout)
+        .max_send_buf_size(settings.max_send_buf_size)
         .auto_date_header(false);
     // Preserve h2/hyper's rapid-reset protection; never disable either limit.
     builder
-        .max_pending_accept_reset_streams(20)
-        .max_local_error_reset_streams(1024);
+        .max_pending_accept_reset_streams(settings.max_pending_accept_reset_streams)
+        .max_local_error_reset_streams(settings.max_local_error_reset_streams);
     let calls = tracker.clone();
     let connection = builder.serve_connection(
         hyper_util::rt::TokioIo::new(io),
