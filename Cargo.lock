@@ -1424,6 +1424,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "triple-server"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "prost",
+ "rcgen",
+ "rpc",
+ "rpc-interop",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tonic",
+ "transport",
+ "triple-core",
+ "triple-http",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
