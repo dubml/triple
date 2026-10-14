@@ -365,8 +365,19 @@ async fn single_port_tls_h2_grpc_json_and_http1_json_and_505_succeed() {
 
 #[tokio::test]
 async fn http1_slow_headers_connection_is_closed() {
+    let observed = Arc::new(AtomicUsize::new(0));
+    let errors = observed.clone();
     let config = Config {
         header_read_timeout: Duration::from_millis(200),
+        on_connection_error: Some(Arc::new(move |error| {
+            if let triple_server::Error::Connection(error) = error
+                && error
+                    .downcast_ref::<hyper::Error>()
+                    .is_some_and(hyper::Error::is_timeout)
+            {
+                errors.fetch_add(1, Ordering::SeqCst);
+            }
+        })),
         ..Config::default()
     };
     let (address, stop, server) =
@@ -378,9 +389,15 @@ async fn http1_slow_headers_connection_is_closed() {
         .await
         .unwrap()
         .unwrap();
-    stop.cancel();
-    let result = tokio::time::timeout(WAIT, server).await.unwrap().unwrap();
-    assert!(matches!(result, Err(triple_server::Error::Connection(_))));
+    let (s, h, b) = http(
+        TcpStream::connect(&address).await.unwrap(),
+        false,
+        request("application/json", message("application/json")),
+    )
+    .await;
+    check("application/json", s, h, b);
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    finish(stop, server).await;
 }
 
 async fn settings(address: &str) -> Vec<u8> {
@@ -631,6 +648,80 @@ async fn single_port_shutdown_joins_stream_tasks() {
 #[tokio::test]
 async fn single_port_graceful_shutdown_finishes_grpc_and_json() {
     shutdown_calls(Duration::from_millis(60), Duration::from_secs(1), true).await;
+}
+
+#[tokio::test]
+async fn single_port_http2_json_deadline_returns_408() {
+    let counts = Arc::new(Counts::default());
+    let (address, stop, server) = start(
+        Arc::new(demo::Echo),
+        Arc::new(NeverJson(counts.clone())),
+        Config::default(),
+    )
+    .await;
+    let mut req = request("application/json", Bytes::from_static(b"[{}]"));
+    req.headers_mut()
+        .insert("tri-service-timeout", "300".parse().unwrap());
+    let (status, _, _) = tokio::time::timeout(
+        Duration::from_millis(300) + WAIT,
+        http(TcpStream::connect(&address).await.unwrap(), true, req),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, 408);
+    assert_eq!(counts.active.load(Ordering::SeqCst), 0);
+    assert_eq!(counts.dropped.load(Ordering::SeqCst), 1);
+    finish(stop, server).await;
+}
+struct NeverJson(Arc<Counts>);
+impl UnaryHandler for NeverJson {
+    fn is_registered(&self, _: Path<'_>) -> bool {
+        true
+    }
+    async fn call(
+        &self,
+        _: Path<'_>,
+        _: Encoding,
+        _: Bytes,
+        _: CallContext,
+    ) -> Result<Bytes, Status> {
+        self.0.active.fetch_add(1, Ordering::SeqCst);
+        let _guard = Guard(self.0.clone());
+        std::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn single_port_date_header_policy() {
+    let (address, stop, server) = start(
+        Arc::new(demo::Echo),
+        Arc::new(demo::Greeter),
+        Config::default(),
+    )
+    .await;
+    for h2 in [false, true] {
+        let (s, h, b) = http(
+            TcpStream::connect(&address).await.unwrap(),
+            h2,
+            request("application/json", message("application/json")),
+        )
+        .await;
+        assert_eq!(h.contains_key("date"), !h2);
+        check("application/json", s, h, b);
+    }
+    let mut client = EchoClient::connect(format!("http://{address}"))
+        .await
+        .unwrap();
+    let response = client
+        .unary(EchoMessage {
+            text: "date".into(),
+        })
+        .await
+        .unwrap();
+    assert!(response.metadata().get("date").is_none());
+    assert_eq!(response.into_inner().text, "date");
+    drop(client);
+    finish(stop, server).await;
 }
 async fn shutdown_calls(delay: Duration, timeout: Duration, success: bool) {
     let grpc = Arc::new(Counts::default());

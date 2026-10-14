@@ -16,6 +16,8 @@ use tokio::{
 use tokio_rustls::{TlsAcceptor, rustls};
 use tokio_util::task::TaskTracker;
 
+mod accept;
+
 /// Unified service/body error for both bindings.
 pub type BoxError = Box<dyn StdError + Send + Sync>;
 /// The response body is either a streaming RPC or a complete HTTP Unary value.
@@ -39,9 +41,11 @@ pub enum Error {
 }
 /// Server result with owned connection errors.
 pub type Result<T> = std::result::Result<T, Error>;
+/// Synchronous observer for a connection or accept error.
+pub type ConnectionErrorCallback = dyn Fn(&Error) + Send + Sync;
 
 /// Configuration for both bindings and their shared network lifecycle.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
     /// RPC message/header/concurrency bounds.
     pub rpc_limits: Limits,
@@ -53,6 +57,9 @@ pub struct Config {
     pub shutdown_timeout: Duration,
     /// Optional TLS configuration, cloned with h2 and http/1.1 ALPN.
     pub tls: Option<Arc<rustls::ServerConfig>>,
+    /// Observes connection and accept errors, including errors recorded without
+    /// failing the listener. The callback runs synchronously and should be short.
+    pub on_connection_error: Option<Arc<ConnectionErrorCallback>>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -62,7 +69,23 @@ impl Default for Config {
             header_read_timeout: Duration::from_secs(10),
             shutdown_timeout: Duration::from_secs(5),
             tls: None,
+            on_connection_error: None,
         }
+    }
+}
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("rpc_limits", &self.rpc_limits)
+            .field("http", &self.http)
+            .field("header_read_timeout", &self.header_read_timeout)
+            .field("shutdown_timeout", &self.shutdown_timeout)
+            .field("tls", &self.tls)
+            .field(
+                "on_connection_error",
+                &self.on_connection_error.as_ref().map(|_| "callback"),
+            )
+            .finish()
     }
 }
 
@@ -84,7 +107,8 @@ impl<S: rpc::Service + 'static, H: triple_http::UnaryHandler + 'static> Server<S
     }
 
     /// Accepts connections until shutdown, then drains and joins every connection.
-    /// Connection errors are returned after draining; they do not stop acceptance.
+    /// Peer I/O termination and HTTP/1 header timeouts are recorded through the
+    /// callback. Other connection errors are returned after all connections drain.
     pub async fn serve(
         self: Arc<Self>,
         listener: TcpListener,
@@ -97,22 +121,50 @@ impl<S: rpc::Service + 'static, H: triple_http::UnaryHandler + 'static> Server<S
                 biased;
                 _ = shutdown.cancelled() => break,
                 joined = connections.join_next(), if !connections.is_empty() => {
-                    if let Some(joined) = joined { remember(&mut result, joined); }
+                    if let Some(joined) = joined { self.remember(&mut result, joined); }
                 },
                 accepted = listener.accept() => match accepted {
                     Ok((io, _)) => {
                         let server = self.clone(); let stop = shutdown.clone();
                         connections.spawn(async move { server.serve_connection(io, stop).await });
                     },
-                    Err(error) => { result = Err(Error::Io(error)); break; }
+                    Err(error) => {
+                        let retry = accept::is_transient(&error);
+                        let error = Error::Io(error);
+                        self.record(&error);
+                        if !retry { result = Err(error); break; }
+                        tokio::select! {
+                            _ = shutdown.cancelled() => break,
+                            _ = tokio::time::sleep(Duration::from_millis(50)) => {},
+                        }
+                    }
                 }
             }
         }
         shutdown.cancel();
         while let Some(joined) = connections.join_next().await {
-            remember(&mut result, joined);
+            self.remember(&mut result, joined);
         }
         result
+    }
+
+    fn record(&self, error: &Error) {
+        if let Some(callback) = &self.config.on_connection_error {
+            callback(error);
+        }
+    }
+
+    fn remember(
+        &self,
+        result: &mut Result<()>,
+        joined: std::result::Result<Result<()>, tokio::task::JoinError>,
+    ) {
+        if let Err(error) = joined.map_err(Error::Task).and_then(|r| r) {
+            self.record(&error);
+            if !connection_is_peer_error(&error) && result.is_ok() {
+                *result = Err(error);
+            }
+        }
     }
 
     /// Serves one TCP stream, optionally performing the configured TLS handshake.
@@ -243,39 +295,38 @@ async fn dispatch<S: rpc::Service + 'static, H: triple_http::UnaryHandler>(
     }
 }
 
-fn remember(
-    result: &mut Result<()>,
-    joined: std::result::Result<Result<()>, tokio::task::JoinError>,
-) {
-    let next = joined.map_err(Error::Task).and_then(|r| r);
-    if result.is_ok() {
-        *result = next;
-    }
+fn connection_result(result: std::result::Result<(), BoxError>) -> Result<()> {
+    result.map_err(Error::Connection)
 }
 
-fn connection_result(result: std::result::Result<(), BoxError>) -> Result<()> {
-    let Err(error) = result else {
-        return Ok(());
+// Final connection-error ownership belongs to serve, after notifying its callback.
+fn connection_is_peer_error(error: &Error) -> bool {
+    let mut source: Option<&(dyn StdError + 'static)> = match error {
+        Error::Io(error) => Some(error),
+        Error::Connection(error) => Some(&**error),
+        Error::Task(_) | Error::InvalidConfig(_) => return false,
     };
-    let user = error
-        .downcast_ref::<hyper::Error>()
-        .is_some_and(hyper::Error::is_user);
-    if !user {
-        let mut source: Option<&(dyn StdError + 'static)> = Some(&*error);
-        while let Some(current) = source {
-            if let Some(io) = current.downcast_ref::<std::io::Error>()
-                && matches!(
-                    io.kind(),
-                    std::io::ErrorKind::ConnectionReset
-                        | std::io::ErrorKind::ConnectionAborted
-                        | std::io::ErrorKind::BrokenPipe
-                        | std::io::ErrorKind::UnexpectedEof
-                )
-            {
-                return Ok(());
+    while let Some(current) = source {
+        if let Some(error) = current.downcast_ref::<hyper::Error>() {
+            if error.is_user() {
+                return false;
             }
-            source = current.source();
+            if error.is_timeout() {
+                return true;
+            }
         }
+        if let Some(io) = current.downcast_ref::<std::io::Error>()
+            && matches!(
+                io.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        {
+            return true;
+        }
+        source = current.source();
     }
-    Err(Error::Connection(error))
+    false
 }

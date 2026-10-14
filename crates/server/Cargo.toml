@@ -17,6 +17,7 @@ tokio.workspace = true
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-rustls.workspace = true
 thiserror.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 rpc-interop = { path = "../rpc-interop" }
