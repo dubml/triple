@@ -61,8 +61,13 @@ impl rpc::Service for Echo {
         self.kind(path).is_some()
     }
     fn kind(&self, path: &str) -> Option<rpc::RpcKind> {
+        if path == "/demo.Greeter/SayHello" {
+            return Some(rpc::RpcKind::Unary);
+        }
         Some(match path.strip_prefix("/test.Echo/")? {
-            "Unary" | "Fail" | "Slow" => rpc::RpcKind::Unary,
+            "Unary" | "Fail" | "FailPlain" | "FailNoDetails" | "FailNoDetailsPlain" | "Slow" => {
+                rpc::RpcKind::Unary
+            }
             "ServerStreaming" => rpc::RpcKind::ServerStreaming,
             "ClientStreaming" => rpc::RpcKind::ClientStreaming,
             "Bidirectional" => rpc::RpcKind::Bidirectional,
@@ -76,12 +81,35 @@ impl rpc::Service for Echo {
         response: &mut rpc::Outgoing,
     ) -> rpc::Result<()> {
         match path {
-            "/test.Echo/Fail" => Err(rpc::Status::new(
-                rpc::Code::PermissionDenied,
-                "denied: 测试 %",
-            )
-            .with_details(&[8, 7])?
-            .into()),
+            "/demo.Greeter/SayHello" => {
+                let request = request
+                    .message::<HelloRequest>()
+                    .await?
+                    .ok_or(rpc::Error::Cardinality("request"))?;
+                response
+                    .send(&HelloReply {
+                        message: format!("Hello {}", request.name),
+                    })
+                    .await
+            }
+            "/test.Echo/Fail"
+            | "/test.Echo/FailPlain"
+            | "/test.Echo/FailNoDetails"
+            | "/test.Echo/FailNoDetailsPlain" => {
+                let message = if matches!(
+                    path,
+                    "/test.Echo/FailPlain" | "/test.Echo/FailNoDetailsPlain"
+                ) {
+                    "denied: plain"
+                } else {
+                    "denied: 测试 %"
+                };
+                let mut status = rpc::Status::new(rpc::Code::PermissionDenied, message);
+                if matches!(path, "/test.Echo/Fail" | "/test.Echo/FailPlain") {
+                    status = status.with_details(&[8, 7])?;
+                }
+                Err(status.into())
+            }
             "/test.Echo/Slow" => {
                 request.message::<EchoMessage>().await?;
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;

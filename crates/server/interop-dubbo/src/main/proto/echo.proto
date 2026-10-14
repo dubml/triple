@@ -1,0 +1,13 @@
+syntax = "proto3";
+package test;
+option java_package = "test";
+option java_multiple_files = true;
+message EchoMessage { string text = 1; }
+service Echo {
+  rpc Unary(EchoMessage) returns (EchoMessage);
+  rpc Slow(EchoMessage) returns (EchoMessage);
+  rpc Fail(EchoMessage) returns (EchoMessage);
+  rpc FailPlain(EchoMessage) returns (EchoMessage);
+  rpc FailNoDetails(EchoMessage) returns (EchoMessage);
+  rpc FailNoDetailsPlain(EchoMessage) returns (EchoMessage);
+}
