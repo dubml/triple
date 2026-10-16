@@ -208,6 +208,14 @@ where
         .auto_date_header(false)
         .max_pending_accept_reset_streams(s.max_pending_accept_reset_streams)
         .max_local_error_reset_streams(s.max_local_error_reset_streams);
+    // Mirror the public entry's pre-cancelled case without polling hyper. The
+    // partial/complete-preface cases exercise the real entry in handshake tests.
+    if shutdown.is_cancelled() {
+        stop.cancel();
+        tracker.close();
+        tracker.wait().await;
+        return Ok(());
+    }
     let calls = tracker.clone();
     let connection = builder.serve_connection(
         hyper_util::rt::TokioIo::new(io),
@@ -421,7 +429,7 @@ async fn handler_panics_report_failure_and_join_siblings() {
 async fn pre_cancelled_plain_handshake_starts_no_tasks() {
     // The old unbiased select may poll the handshake before cancellation wins.
     // Its existing contract asserts successful cancellation, not zero I/O polls.
-    // The current server polls during draining, but creates no stream tasks.
+    // 预取消握手不再进行 I/O 轮询，因为包装器外层在 hyper 之前观察到取消。
     for trial in 0..8 {
         let (io, _peer) = tokio::io::duplex(64);
         let old_io = Arc::new(IoCounts::default());
@@ -482,8 +490,8 @@ async fn pre_cancelled_plain_handshake_starts_no_tasks() {
             observed.then(|| inspection.streams.constructed.load(SeqCst))
         );
         assert!(result.is_ok());
-        assert!(counts.reads.load(SeqCst) > 0);
-        assert!(counts.writes.load(SeqCst) > 0);
+        assert_eq!(counts.reads.load(SeqCst), 0);
+        assert_eq!(counts.writes.load(SeqCst), 0);
         assert_eq!(work.calls.load(SeqCst), 0);
         assert_eq!(counts.dropped.load(SeqCst), 1);
         if observed {

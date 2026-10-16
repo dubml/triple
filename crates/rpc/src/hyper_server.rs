@@ -8,17 +8,88 @@ use http_body::{Body, Frame};
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     sync::{mpsc, oneshot},
 };
 use tokio_util::task::TaskTracker;
 
 tokio::task_local! { static STREAM_ABORT: CancellationToken; }
+
+const CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+// Observe only bytes returned to hyper. h2 finishes its server handshake after
+// validating this preface; neither a partial nor an invalid prefix completes it.
+struct PrefaceIo<T> {
+    inner: T,
+    matched: usize,
+    mismatched: bool,
+    complete: Arc<AtomicBool>,
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for PrefaceIo<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let filled = buf.filled().len();
+        let result = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if matches!(result, Poll::Ready(Ok(()))) && !self.mismatched {
+            for &byte in &buf.filled()[filled..] {
+                if self.matched == CLIENT_PREFACE.len() {
+                    break;
+                }
+                if byte != CLIENT_PREFACE[self.matched] {
+                    self.mismatched = true;
+                    break;
+                }
+                self.matched += 1;
+                if self.matched == CLIENT_PREFACE.len() {
+                    self.complete.store(true, Ordering::Release);
+                }
+            }
+        }
+        result
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for PrefaceIo<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, bytes)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+}
 
 #[derive(Clone)]
 /// Tracks hyper stream futures and allows cancellation during flow-control waits.
@@ -291,6 +362,13 @@ where
     builder
         .max_pending_accept_reset_streams(settings.max_pending_accept_reset_streams)
         .max_local_error_reset_streams(settings.max_local_error_reset_streams);
+    let preface_complete = Arc::new(AtomicBool::new(false));
+    let io = PrefaceIo {
+        inner: io,
+        matched: 0,
+        mismatched: false,
+        complete: preface_complete.clone(),
+    };
     let calls = tracker.clone();
     let connection = builder.serve_connection(
         hyper_util::rt::TokioIo::new(io),
@@ -302,13 +380,17 @@ where
     let result = tokio::select! {
         biased;
         _ = shutdown.cancelled() => {
-            connection.as_mut().graceful_shutdown();
-            match tokio::time::Instant::now().checked_add(shutdown_timeout) {
-                Some(deadline) => match tokio::time::timeout_at(deadline, &mut connection).await {
-                    Ok(result) => connection_result(result),
-                    Err(_) => Ok(()),
-                },
-                None => Err(transport::Error::InvalidConfig("shutdown timeout overflow").into()),
+            if !preface_complete.load(Ordering::Acquire) {
+                Ok(())
+            } else {
+                connection.as_mut().graceful_shutdown();
+                match tokio::time::Instant::now().checked_add(shutdown_timeout) {
+                    Some(deadline) => match tokio::time::timeout_at(deadline, &mut connection).await {
+                        Ok(result) => connection_result(result),
+                        Err(_) => Ok(()),
+                    },
+                    None => Err(transport::Error::InvalidConfig("shutdown timeout overflow").into()),
+                }
             }
         },
         result = &mut connection => connection_result(result),
