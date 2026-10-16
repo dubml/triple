@@ -427,19 +427,19 @@ async fn handler_panics_report_failure_and_join_siblings() {
 
 #[tokio::test]
 async fn pre_cancelled_plain_handshake_starts_no_tasks() {
-    // The old unbiased select may poll the handshake before cancellation wins.
-    // Its existing contract asserts successful cancellation, not zero I/O polls.
+    // Preserve the eight successful-cancellation/drop trials on the current
+    // server. The old implementation's observations are archived in 4b9d7f4.
     // 预取消握手不再进行 I/O 轮询，因为包装器外层在 hyper 之前观察到取消。
     for trial in 0..8 {
         let (io, _peer) = tokio::io::duplex(64);
-        let old_io = Arc::new(IoCounts::default());
+        let trial_io = Arc::new(IoCounts::default());
         let stop = CancellationToken::new();
         stop.cancel();
         let result = tokio::time::timeout(
             WAIT,
-            transport::serve_connection(
-                ObservedIo(io, old_io.clone()),
-                |_, _| async {},
+            rpc::serve_connection(
+                ObservedIo(io, trial_io.clone()),
+                Arc::new(Work::default()),
                 Limits::default(),
                 stop,
                 SHUTDOWN,
@@ -448,13 +448,13 @@ async fn pre_cancelled_plain_handshake_starts_no_tasks() {
         .await
         .unwrap();
         println!(
-            "G3 old transport trial={trial}: result={result:?} read_polls={} write_polls={} io_dropped={}",
-            old_io.reads.load(SeqCst),
-            old_io.writes.load(SeqCst),
-            old_io.dropped.load(SeqCst)
+            "G3 rpc trial={trial}: result={result:?} read_polls={} write_polls={} io_dropped={}",
+            trial_io.reads.load(SeqCst),
+            trial_io.writes.load(SeqCst),
+            trial_io.dropped.load(SeqCst)
         );
         assert!(result.is_ok());
-        assert_eq!(old_io.dropped.load(SeqCst), 1);
+        assert_eq!(trial_io.dropped.load(SeqCst), 1);
     }
     for observed in [false, true] {
         let (io, _peer) = tokio::io::duplex(64);

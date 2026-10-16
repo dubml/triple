@@ -25,7 +25,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
+use tokio::{
+    net::TcpListener,
+    sync::Notify,
+    task::{JoinHandle, JoinSet},
+};
 use transport::{
     CancellationToken, Client, Error, Limits, Receiver, Result, Sender, serve_connection,
 };
@@ -93,16 +97,39 @@ async fn echo_server() -> (String, CancellationToken, JoinHandle<Result<()>>) {
     let shutdown = stop.clone();
     let task = tokio::spawn(async move {
         let (io, _) = listener.accept().await.unwrap();
-        serve_connection(
-            io,
-            |request, responder| async move {
-                let _ = echo(request, responder).await;
-            },
-            Limits::default(),
-            shutdown,
-            Duration::from_secs(1),
-        )
-        .await
+        // A test-local h2 peer keeps the client assertions independent of the
+        // retired server implementation. Only the deferred panic fixture uses it.
+        let limits = Limits::default();
+        let mut connection = h2::server::Builder::new()
+            .max_header_list_size(u32::try_from(limits.max_header_size).unwrap())
+            .max_concurrent_streams(limits.max_concurrent_streams)
+            .handshake::<_, Bytes>(io)
+            .await?;
+        let mut handlers = JoinSet::new();
+        let result = loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break Ok(()),
+                accepted = connection.accept() => match accepted {
+                    Some(Ok((request, responder))) => {
+                        handlers.spawn(async move {
+                            let _ = echo(request, responder).await;
+                        });
+                    }
+                    Some(Err(error)) => break Err(error.into()),
+                    None => break Ok(()),
+                },
+                joined = handlers.join_next(), if !handlers.is_empty() => {
+                    joined.unwrap().unwrap();
+                }
+            }
+        };
+        handlers.abort_all();
+        while let Some(joined) = handlers.join_next().await {
+            if let Err(error) = joined {
+                assert!(error.is_cancelled());
+            }
+        }
+        result
     });
     (address, stop, task)
 }
@@ -249,7 +276,6 @@ impl Drop for HandlerGuard {
 
 struct TrackedServer {
     address: String,
-    stop: CancellationToken,
     task: JoinHandle<Result<()>>,
     started: Arc<Notify>,
     dropped: Arc<AtomicUsize>,
@@ -308,7 +334,6 @@ async fn tracked_server(delay: Duration, shutdown_timeout: Duration) -> TrackedS
     });
     TrackedServer {
         address,
-        stop,
         task,
         started,
         dropped,
@@ -319,110 +344,6 @@ async fn started(server: &TrackedServer) {
     tokio::time::timeout(Duration::from_secs(2), server.started.notified())
         .await
         .unwrap();
-}
-
-async fn wait_for_drop(server: &TrackedServer) {
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while server.dropped.load(Ordering::SeqCst) == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
-async fn peer_reset_drops_handler_future_and_connection_remains_usable() {
-    let server = tracked_server(Duration::from_secs(60), Duration::from_secs(1)).await;
-    let mut client = Client::connect(&server.address, Limits::default())
-        .await
-        .unwrap();
-    let (mut requests, response) = open(&mut client, "/test/Held").await;
-    let incoming = receive(response).await;
-    requests.send(b"cancel").await.unwrap();
-    started(&server).await;
-    requests.reset();
-    drop(incoming);
-    wait_for_drop(&server).await;
-    assert_eq!(server.dropped.load(Ordering::SeqCst), 1);
-    let (mut second, response) = open(&mut client, "/test/Next").await;
-    let incoming = receive(response).await;
-    second.send(b"still-usable").await.unwrap();
-    started(&server).await;
-    second.reset();
-    drop(incoming);
-    drop(client);
-    server.stop.cancel();
-    join_server(server.task).await;
-    assert_eq!(server.dropped.load(Ordering::SeqCst), 2);
-}
-
-#[tokio::test]
-async fn graceful_shutdown_drains_active_stream_and_preserves_trailers() {
-    let server = tracked_server(Duration::from_millis(30), Duration::from_secs(1)).await;
-    let mut client = Client::connect(&server.address, Limits::default())
-        .await
-        .unwrap();
-    let (mut requests, response) = open(&mut client, "/test/Drained").await;
-    requests.send(b"drained").await.unwrap();
-    requests.close().unwrap();
-    let mut incoming = receive(response).await;
-    started(&server).await;
-    server.stop.cancel();
-    assert_eq!(
-        incoming.message().await.unwrap().unwrap(),
-        b"drained".as_slice()
-    );
-    assert!(incoming.message().await.unwrap().is_none());
-    assert_eq!(incoming.trailers().unwrap()["completed"], "yes");
-    join_server(server.task).await;
-    assert_eq!(server.dropped.load(Ordering::SeqCst), 1);
-    // GOAWAY does not admit new streams after the connection has drained.
-    assert!(client.ready().await.is_err());
-}
-
-#[tokio::test]
-async fn shutdown_timeout_aborts_and_joins_active_handlers() {
-    let server = tracked_server(Duration::from_secs(60), Duration::from_millis(20)).await;
-    let mut client = Client::connect(&server.address, Limits::default())
-        .await
-        .unwrap();
-    let (mut requests, response) = open(&mut client, "/test/Abort").await;
-    requests.send(b"abort").await.unwrap();
-    requests.close().unwrap();
-    let mut incoming = receive(response).await;
-    started(&server).await;
-    server.stop.cancel();
-    join_server(server.task).await;
-    assert_eq!(server.dropped.load(Ordering::SeqCst), 1);
-    assert!(
-        tokio::time::timeout(Duration::from_secs(2), incoming.message())
-            .await
-            .unwrap()
-            .is_err()
-    );
-}
-
-#[tokio::test]
-async fn connection_loss_aborts_and_joins_active_handlers() {
-    let server = tracked_server(Duration::from_secs(60), Duration::from_secs(1)).await;
-    let mut client = Client::connect(&server.address, Limits::default())
-        .await
-        .unwrap();
-    let (mut requests, response) = open(&mut client, "/test/Disconnect").await;
-    requests.send(b"disconnect").await.unwrap();
-    let mut incoming = receive(response).await;
-    started(&server).await;
-    drop(client);
-    join_server(server.task).await;
-    assert_eq!(server.dropped.load(Ordering::SeqCst), 1);
-    assert!(
-        tokio::time::timeout(Duration::from_secs(2), incoming.message())
-            .await
-            .unwrap()
-            .is_err()
-    );
-    assert!(requests.send(b"after-disconnect").await.is_err());
 }
 
 #[tokio::test]
@@ -447,23 +368,7 @@ async fn handler_panic_is_reported_and_other_handlers_are_joined() {
 }
 
 #[tokio::test]
-async fn cancelled_handshake_and_invalid_limits_do_not_start_connection_tasks() {
-    let (io, _peer) = tokio::io::duplex(64);
-    let stop = CancellationToken::new();
-    stop.cancel();
-    tokio::time::timeout(
-        Duration::from_secs(1),
-        serve_connection(
-            io,
-            |_request, _response| async {},
-            Limits::default(),
-            stop,
-            Duration::from_secs(1),
-        ),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+async fn invalid_limits_do_not_start_client_connection_tasks() {
     let (io, _peer) = tokio::io::duplex(64);
     let limits = Limits {
         max_header_size: usize::MAX,
