@@ -243,12 +243,12 @@ impl<S: triple_rpc::Service + 'static, H: triple_http::UnaryHandler + 'static> S
                 connection.as_mut().graceful_shutdown();
                 match tokio::time::Instant::now().checked_add(self.config.shutdown_timeout) {
                     Some(deadline) => match tokio::time::timeout_at(deadline, &mut connection).await {
-                        Ok(result) => connection_result(result), Err(_) => Ok(()),
+                        Ok(result) => connection_result(result, &shutdown), Err(_) => Ok(()),
                     },
                     None => Err(Error::InvalidConfig("shutdown timeout overflow")),
                 }
             },
-            result = &mut connection => connection_result(result),
+            result = &mut connection => connection_result(result, &shutdown),
         };
         // Stop every stream task, close the tracker, and join before returning.
         stop.cancel();
@@ -295,8 +295,23 @@ async fn dispatch<S: triple_rpc::Service + 'static, H: triple_http::UnaryHandler
     }
 }
 
-fn connection_result(result: std::result::Result<(), BoxError>) -> Result<()> {
-    result.map_err(Error::Connection)
+fn connection_result(
+    result: std::result::Result<(), BoxError>,
+    shutdown: &CancellationToken,
+) -> Result<()> {
+    match result {
+        // auto's protocol detector reports graceful shutdown as this direct I/O error.
+        Err(error)
+            if shutdown.is_cancelled()
+                && error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    error.kind() == std::io::ErrorKind::Interrupted
+                        && error.to_string() == "Cancelled"
+                }) =>
+        {
+            Ok(())
+        }
+        result => result.map_err(Error::Connection),
+    }
 }
 
 // Final connection-error ownership belongs to serve, after notifying its callback.
@@ -329,4 +344,24 @@ fn connection_is_peer_error(error: &Error) -> bool {
         source = current.source();
     }
     false
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn other_interrupted_errors_are_preserved_during_shutdown() {
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        let error = std::io::Error::new(std::io::ErrorKind::Interrupted, "other interruption");
+        assert!(matches!(
+            connection_result(Err(Box::new(error)), &shutdown),
+            Err(Error::Connection(error))
+                if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    error.kind() == std::io::ErrorKind::Interrupted
+                        && error.to_string() == "other interruption"
+                })
+        ));
+    }
 }
