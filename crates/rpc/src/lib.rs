@@ -53,7 +53,8 @@ pub use error::{Error, Result};
 pub use http2_settings::{Http2Settings, http2_settings};
 pub use hyper_server::StreamExecutor;
 pub use kernel::{
-    CallError, Reader, Service, Writer, finish_call, invoke_service, resolve_method, unary,
+    CallError, HandlerPanicPhase, Reader, Service, Writer, finish_call, invoke_service,
+    resolve_method, unary,
 };
 pub use message::{decode_message, encode_message};
 pub use server::{ResponseBody, handle, immediate_error, serve_connection};

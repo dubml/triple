@@ -53,6 +53,16 @@ pub trait Writer {
     fn finish(&mut self, status: &Status) -> std::result::Result<(), Self::Error>;
 }
 
+/// The stage at which a service handler panicked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HandlerPanicPhase {
+    /// Calling the service to construct its handler future.
+    Construction,
+    /// Polling the handler future.
+    Future,
+}
+
 /// Service lookup and typed handler interface for all RPC modes.
 ///
 /// Adapters may supply their own reader/writer types to preserve deadline and
@@ -76,6 +86,8 @@ where
     ) -> std::result::Result<Metadata, R::Error> {
         Ok(Metadata::new())
     }
+    /// Observes a handler panic isolated by the hyper server, without its payload.
+    fn on_handler_panic(&self, _path: &str, _phase: HandlerPanicPhase) {}
     /// Handles request and response messages; errors become final trailers.
     fn call(
         &self,

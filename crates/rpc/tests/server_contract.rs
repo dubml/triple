@@ -332,10 +332,9 @@ async fn connection_loss_joins_handlers_and_fails_both_halves() {
 
 #[tokio::test]
 async fn handler_panics_report_failure_and_join_siblings() {
-    // Difference from transport/tests/lifecycle.rs:429: Tokio catches the
-    // handler panic, but RPC does not return HandlerTask or abort siblings.
-    // Keep the requested legacy-oriented test name; assertions below freeze
-    // the current behavior, not the old contract. This difference needs review.
+    // Old transport returns HandlerTask and terminates sibling handlers. RPC
+    // isolates the failed call, sends INTERNAL, and invokes on_handler_panic;
+    // callback path/phase/count are covered by handler_panic.rs. Keep the legacy name.
     for factory in [true, false] {
         for observed in [false, true] {
             let (address, stop, work, inspection, mut server) = start(observed).await;
@@ -370,8 +369,9 @@ async fn handler_panics_report_failure_and_join_siblings() {
             assert!(
                 matches!(
                     failed,
-                    Err(triple_rpc::Error::Transport(triple_transport::Error::Transport(ref error)))
-                        if error.reason() == Some(h2::Reason::CANCEL)
+                    Err(triple_rpc::Error::Rpc(ref status))
+                        if status.code() == triple_rpc::Code::Internal
+                            && status.message() == "handler panicked"
                 ),
                 "{failed:?}"
             );
@@ -403,7 +403,7 @@ async fn handler_panics_report_failure_and_join_siblings() {
                 assert_eq!(inspection.streams.unwound.load(SeqCst), 0);
             }
             println!(
-                "G2 factory={factory} observed_tracker={observed}: unwound=1 panic_rpc={failed:?}, server_pending=true sibling_active=1 sibling_dropped=0 next_call=alive tracker_len={:?}; tracker has no failure-result storage",
+                "G2 factory={factory} observed_tracker={observed}: unwound=1 panic_rpc={failed:?}, server_pending=true sibling_active=1 sibling_dropped=0 next_call=alive tracker_len={:?}; panic isolated with INTERNAL and callback",
                 observed.then(|| tracker.len())
             );
             stop.cancel();

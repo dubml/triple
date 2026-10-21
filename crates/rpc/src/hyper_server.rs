@@ -1,12 +1,13 @@
 use crate::{
-    CancellationToken, Deadline, Error, Incoming, Limits, Metadata, Outgoing, Result, Service,
-    Status,
+    CancellationToken, Code, Deadline, Error, HandlerPanicPhase, Incoming, Limits, Metadata,
+    Outgoing, Result, Service, Status,
 };
 use bytes::Bytes;
 use http::{HeaderMap, Request, Response, StatusCode};
 use http_body::{Body, Frame};
 use std::{
     future::Future,
+    panic::{AssertUnwindSafe, catch_unwind},
     pin::Pin,
     sync::{
         Arc,
@@ -22,6 +23,47 @@ use tokio::{
 use tokio_util::task::TaskTracker;
 
 tokio::task_local! { static STREAM_ABORT: CancellationToken; }
+
+// Keep the response writer outside the unwind boundary so panic status can still
+// use its terminal trailers slot. Dropping this future on cancellation is not caught.
+struct PanicObserved<'a, S>(&'a S);
+
+impl<S: Service> PanicObserved<'_, S> {
+    fn failure(&self, path: &str, phase: HandlerPanicPhase) -> Error {
+        self.0.on_handler_panic(path, phase);
+        Status::new(Code::Internal, "handler panicked").into()
+    }
+}
+
+impl<S: Service> Service for PanicObserved<'_, S> {
+    fn contains(&self, path: &str) -> bool {
+        self.0.contains(path)
+    }
+
+    async fn call(
+        &self,
+        path: &str,
+        request: &mut Incoming,
+        response: &mut Outgoing,
+    ) -> Result<()> {
+        let arguments = (request, response);
+        let handler = match catch_unwind(AssertUnwindSafe(move || {
+            let (request, response) = arguments;
+            self.0.call(path, request, response)
+        })) {
+            Ok(handler) => handler,
+            Err(_) => return Err(self.failure(path, HandlerPanicPhase::Construction)),
+        };
+        let mut handler = std::pin::pin!(handler);
+        std::future::poll_fn(|cx| {
+            match catch_unwind(AssertUnwindSafe(|| handler.as_mut().poll(cx))) {
+                Ok(result) => result,
+                Err(_) => Poll::Ready(Err(self.failure(path, HandlerPanicPhase::Future))),
+            }
+        })
+        .await
+    }
+}
 
 const CLIENT_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
@@ -280,9 +322,10 @@ pub async fn handle<S: Service + 'static>(
     let mut outgoing =
         Outgoing::for_hyper(sender, limits, kind.single_response()).with_context(context.clone());
     tracker.spawn(async move {
+        let observed = PanicObserved(&*service);
         let result = context
             .run(crate::invoke_service(
-                &*service,
+                &observed,
                 &path,
                 kind,
                 &mut incoming,
