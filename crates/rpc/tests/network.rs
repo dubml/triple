@@ -19,8 +19,8 @@
 mod common;
 
 use common::{Echo, spawn_server};
-use rpc::{Call, CallOptions, Client, Code, Error, Limits, RpcKind};
 use std::time::Duration;
+use triple_rpc::{Call, CallOptions, Client, Code, Error, Limits, RpcKind};
 
 #[tokio::test]
 async fn errors_unknown_method_and_rich_status() {
@@ -56,7 +56,7 @@ async fn errors_unknown_method_and_rich_status() {
     let mut incoming = response.receive().await.unwrap();
     options.cancellation.cancel();
     assert!(
-        matches!(incoming.message::<Echo>().await, Err(rpc::Error::Rpc(status)) if status.code() == Code::Unimplemented)
+        matches!(incoming.message::<Echo>().await, Err(triple_rpc::Error::Rpc(status)) if status.code() == Code::Unimplemented)
     );
     assert!(incoming.message::<Echo>().await.unwrap().is_none());
     drop(requests);

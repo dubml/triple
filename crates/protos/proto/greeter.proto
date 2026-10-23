@@ -1,10 +1,14 @@
 syntax = "proto3";
 package demo;
+
 option java_package = "demo";
 option java_multiple_files = true;
-message HelloRequest { string name = 1; }
-message HelloReply { string message = 1; }
+
 service Greeter {
   rpc SayHello(HelloRequest) returns (HelloReply);
+  // Deliberately unregistered by example servers to test unknown-method handling.
   rpc Missing(HelloRequest) returns (HelloReply);
 }
+
+message HelloRequest { string name = 1; }
+message HelloReply { string message = 1; }

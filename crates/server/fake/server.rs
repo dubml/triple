@@ -9,7 +9,7 @@ use triple_server::{BoxError, Config, Server};
 async fn main() -> Result<(), BoxError> {
     let address = std::env::var("TRIPLE_LISTEN").unwrap_or_else(|_| "127.0.0.1:50051".into());
     let listener = tokio::net::TcpListener::bind(&address).await?;
-    let shutdown = rpc::CancellationToken::new();
+    let shutdown = triple_rpc::CancellationToken::new();
     let signal = shutdown.clone();
     let signal_task = tokio::spawn(async move {
         let result = tokio::signal::ctrl_c().await;

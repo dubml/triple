@@ -33,10 +33,10 @@ pub enum Error {
     InvalidHeader(&'static str),
     /// Header, metadata or final-status validation failed.
     #[error(transparent)]
-    Headers(#[from] headers::Error),
+    Headers(#[from] triple_headers::Error),
     /// Framing, stream or connection transport failed.
     #[error(transparent)]
-    Transport(#[from] transport::Error),
+    Transport(#[from] triple_transport::Error),
     /// Protobuf decoding failed.
     #[error("invalid Protobuf message: {0}")]
     Decode(#[from] prost::DecodeError),
@@ -76,31 +76,33 @@ impl CallError for Error {
     fn into_status(self) -> Status {
         let code = match self {
             Self::LimitExceeded { .. }
-            | Self::Headers(headers::Error::LimitExceeded { .. })
-            | Self::Transport(transport::Error::Frame(codec::Error::LimitExceeded { .. })) => {
-                Code::ResourceExhausted
-            }
-            Self::Headers(headers::Error::UnsupportedCompression)
-            | Self::Transport(transport::Error::Frame(codec::Error::UnsupportedCompression)) => {
-                Code::Unimplemented
-            }
+            | Self::Headers(triple_headers::Error::LimitExceeded { .. })
+            | Self::Transport(triple_transport::Error::Frame(
+                triple_codec::Error::LimitExceeded { .. },
+            )) => Code::ResourceExhausted,
+            Self::Headers(triple_headers::Error::UnsupportedCompression)
+            | Self::Transport(triple_transport::Error::Frame(
+                triple_codec::Error::UnsupportedCompression,
+            )) => Code::Unimplemented,
             Self::InvalidHeader(_)
-            | Self::Headers(headers::Error::InvalidHeader(_))
-            | Self::Headers(headers::Error::Decode(_))
+            | Self::Headers(triple_headers::Error::InvalidHeader(_))
+            | Self::Headers(triple_headers::Error::Decode(_))
             | Self::Decode(_)
-            | Self::Transport(transport::Error::InvalidConfig(_)) => Code::InvalidArgument,
+            | Self::Transport(triple_transport::Error::InvalidConfig(_)) => Code::InvalidArgument,
             Self::Cardinality("response" | "outgoing") => Code::Internal,
             Self::Cardinality(_) => Code::InvalidArgument,
-            Self::Transport(transport::Error::Io(_)) | Self::Io(_) => Code::Unavailable,
+            Self::Transport(triple_transport::Error::Io(_)) | Self::Io(_) => Code::Unavailable,
             Self::DeadlineExceeded => Code::DeadlineExceeded,
             Self::Cancelled => Code::Cancelled,
-            Self::Transport(transport::Error::Transport(ref error)) => match error.reason() {
-                Some(h2::Reason::CANCEL) => Code::Cancelled,
-                Some(h2::Reason::REFUSED_STREAM) | None => Code::Unavailable,
-                Some(h2::Reason::ENHANCE_YOUR_CALM) => Code::ResourceExhausted,
-                Some(h2::Reason::INADEQUATE_SECURITY) => Code::PermissionDenied,
-                _ => Code::Internal,
-            },
+            Self::Transport(triple_transport::Error::Transport(ref error)) => {
+                match error.reason() {
+                    Some(h2::Reason::CANCEL) => Code::Cancelled,
+                    Some(h2::Reason::REFUSED_STREAM) | None => Code::Unavailable,
+                    Some(h2::Reason::ENHANCE_YOUR_CALM) => Code::ResourceExhausted,
+                    Some(h2::Reason::INADEQUATE_SECURITY) => Code::PermissionDenied,
+                    _ => Code::Internal,
+                }
+            }
             Self::Rpc(status) => return status,
             _ => Code::Internal,
         };

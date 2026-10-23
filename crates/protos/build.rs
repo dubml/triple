@@ -13,21 +13,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto3";
-package test;
+//! Generates shared test and example Protobuf messages and Tonic bindings.
 
-option java_package = "org.apache.dubbo.triple.fixture";
-option java_multiple_files = true;
-
-message EchoMessage {
-  string text = 1;
-}
-
-service Echo {
-  rpc Unary(EchoMessage) returns (EchoMessage);
-  rpc ServerStreaming(EchoMessage) returns (stream EchoMessage);
-  rpc ClientStreaming(stream EchoMessage) returns (EchoMessage);
-  rpc Bidirectional(stream EchoMessage) returns (stream EchoMessage);
-  rpc Fail(EchoMessage) returns (EchoMessage);
-  rpc Slow(EchoMessage) returns (EchoMessage);
+fn main() -> anyhow::Result<()> {
+    println!("cargo:rerun-if-changed=proto/echo.proto");
+    println!("cargo:rerun-if-changed=proto/greeter.proto");
+    tonic_prost_build::configure()
+        .compile_protos(&["proto/echo.proto", "proto/greeter.proto"], &["proto"])?;
+    Ok(())
 }

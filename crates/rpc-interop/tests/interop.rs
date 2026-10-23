@@ -20,14 +20,12 @@
 mod common;
 
 use common::{Echo, spawn_server};
-use rpc::{Call, CallOptions, Client, Code, Deadline, Error, Limits, RpcKind};
-use rpc_interop::{
-    TonicEcho,
-    proto::{EchoMessage, echo_client::EchoClient, echo_server::EchoServer},
-};
+use protos::echo::{EchoMessage, echo_client::EchoClient, echo_server::EchoServer};
+use rpc_interop::TonicEcho;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
+use triple_rpc::{Call, CallOptions, Client, Code, Deadline, Error, Limits, RpcKind};
 
 #[tokio::test]
 async fn native_client_to_independent_tonic_server_all_modes() {

@@ -1,19 +1,10 @@
 use bytes::Bytes;
 use prost::Message;
-use rpc_interop::proto::EchoMessage;
+use protos::echo::EchoMessage;
+pub use protos::greeter::{HelloReply, HelloRequest};
 use triple_core::{Code, Path, Status};
 use triple_http::{CallContext, Encoding, UnaryHandler};
 
-#[derive(Clone, PartialEq, Message)]
-pub struct HelloRequest {
-    #[prost(string, tag = "1")]
-    pub name: String,
-}
-#[derive(Clone, PartialEq, Message)]
-pub struct HelloReply {
-    #[prost(string, tag = "1")]
-    pub message: String,
-}
 pub struct Greeter;
 impl UnaryHandler for Greeter {
     fn is_registered(&self, path: Path<'_>) -> bool {
@@ -56,36 +47,36 @@ impl UnaryHandler for Greeter {
     }
 }
 pub struct Echo;
-impl rpc::Service for Echo {
+impl triple_rpc::Service for Echo {
     fn contains(&self, path: &str) -> bool {
         self.kind(path).is_some()
     }
-    fn kind(&self, path: &str) -> Option<rpc::RpcKind> {
+    fn kind(&self, path: &str) -> Option<triple_rpc::RpcKind> {
         if path == "/demo.Greeter/SayHello" {
-            return Some(rpc::RpcKind::Unary);
+            return Some(triple_rpc::RpcKind::Unary);
         }
         Some(match path.strip_prefix("/test.Echo/")? {
             "Unary" | "Fail" | "FailPlain" | "FailNoDetails" | "FailNoDetailsPlain" | "Slow" => {
-                rpc::RpcKind::Unary
+                triple_rpc::RpcKind::Unary
             }
-            "ServerStreaming" => rpc::RpcKind::ServerStreaming,
-            "ClientStreaming" => rpc::RpcKind::ClientStreaming,
-            "Bidirectional" => rpc::RpcKind::Bidirectional,
+            "ServerStreaming" => triple_rpc::RpcKind::ServerStreaming,
+            "ClientStreaming" => triple_rpc::RpcKind::ClientStreaming,
+            "Bidirectional" => triple_rpc::RpcKind::Bidirectional,
             _ => return None,
         })
     }
     async fn call(
         &self,
         path: &str,
-        request: &mut rpc::Incoming,
-        response: &mut rpc::Outgoing,
-    ) -> rpc::Result<()> {
+        request: &mut triple_rpc::Incoming,
+        response: &mut triple_rpc::Outgoing,
+    ) -> triple_rpc::Result<()> {
         match path {
             "/demo.Greeter/SayHello" => {
                 let request = request
                     .message::<HelloRequest>()
                     .await?
-                    .ok_or(rpc::Error::Cardinality("request"))?;
+                    .ok_or(triple_rpc::Error::Cardinality("request"))?;
                 response
                     .send(&HelloReply {
                         message: format!("Hello {}", request.name),
@@ -104,7 +95,8 @@ impl rpc::Service for Echo {
                 } else {
                     "denied: 测试 %"
                 };
-                let mut status = rpc::Status::new(rpc::Code::PermissionDenied, message);
+                let mut status =
+                    triple_rpc::Status::new(triple_rpc::Code::PermissionDenied, message);
                 if matches!(path, "/test.Echo/Fail" | "/test.Echo/FailPlain") {
                     status = status.with_details(&[8, 7])?;
                 }
@@ -123,7 +115,7 @@ impl rpc::Service for Echo {
                 let message = request
                     .message::<EchoMessage>()
                     .await?
-                    .ok_or(rpc::Error::Cardinality("request"))?;
+                    .ok_or(triple_rpc::Error::Cardinality("request"))?;
                 if path.ends_with("Unary") {
                     response.send(&message).await
                 } else {
@@ -150,7 +142,9 @@ impl rpc::Service for Echo {
                 }
                 Ok(())
             }
-            _ => Err(rpc::Status::new(rpc::Code::Unimplemented, "unknown method").into()),
+            _ => Err(
+                triple_rpc::Status::new(triple_rpc::Code::Unimplemented, "unknown method").into(),
+            ),
         }
     }
 }

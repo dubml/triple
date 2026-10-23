@@ -24,16 +24,17 @@ pub fn immediate_error(
     status: &Status,
     limits: Limits,
 ) -> Result<()> {
-    let mut fields = headers::status_headers(status, &Metadata::new(), limits.max_header_size)?;
-    fields.extend(headers::response_headers(
+    let mut fields =
+        triple_headers::status_headers(status, &Metadata::new(), limits.max_header_size)?;
+    fields.extend(triple_headers::response_headers(
         &Metadata::new(),
         limits.max_header_size,
     )?);
-    headers::check_response_headers(&fields, limits.max_header_size)?;
+    triple_headers::check_response_headers(&fields, limits.max_header_size)?;
     let mut response = Response::new(());
     *response.headers_mut() = fields;
     responder
         .send_response(response, true)
-        .map_err(transport::Error::from)?;
+        .map_err(triple_transport::Error::from)?;
     Ok(())
 }

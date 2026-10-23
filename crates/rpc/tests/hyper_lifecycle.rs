@@ -3,7 +3,6 @@
 
 mod common;
 use common::{Echo, EchoService};
-use rpc::{CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service, serve_connection};
 use std::{
     sync::{
         Arc,
@@ -18,12 +17,19 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::task::TaskTracker;
+use triple_rpc::{
+    CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service, serve_connection,
+};
 
 const WAIT: Duration = Duration::from_secs(2);
 async fn start<S: Service + 'static>(
     service: Arc<S>,
     timeout: Duration,
-) -> (String, CancellationToken, JoinHandle<rpc::Result<()>>) {
+) -> (
+    String,
+    CancellationToken,
+    JoinHandle<triple_rpc::Result<()>>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let stop = CancellationToken::new();
@@ -48,7 +54,7 @@ async fn raw_connect(address: &str) -> TcpStream {
     assert_eq!(header[3], 4);
     io
 }
-async fn joined(server: JoinHandle<rpc::Result<()>>) -> rpc::Result<()> {
+async fn joined(server: JoinHandle<triple_rpc::Result<()>>) -> triple_rpc::Result<()> {
     tokio::time::timeout(WAIT, server).await.unwrap().unwrap()
 }
 
@@ -99,7 +105,7 @@ async fn local_protocol_error_still_returns_err() {
     let mut io = raw_connect(&address).await;
     io.write_all(&[0, 0, 1, 0, 0, 0, 0, 0, 0, 1]).await.unwrap();
     let error = joined(server).await.unwrap_err();
-    assert!(matches!(error, rpc::Error::Io(_)));
+    assert!(matches!(error, triple_rpc::Error::Io(_)));
     let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
     let mut reason = None;
     while let Some(current) = cause {
@@ -143,7 +149,7 @@ impl Service for Flood {
         _: &str,
         request: &mut Incoming,
         response: &mut Outgoing,
-    ) -> rpc::Result<()> {
+    ) -> triple_rpc::Result<()> {
         self.counts.active.fetch_add(1, Ordering::SeqCst);
         let _guard = Guard(self.counts.clone());
         request.message::<Echo>().await?;
@@ -184,17 +190,17 @@ async fn response_backpressure_reaches_handler() {
             Duration::from_millis(50),
         )
         .await;
-        let mut client = rpc::Client::connect(&address, Limits::default())
+        let mut client = triple_rpc::Client::connect(&address, Limits::default())
             .await
             .unwrap();
-        let rpc::Call {
+        let triple_rpc::Call {
             mut requests,
             response,
         } = client
             .call_stream(
                 "/test.Flow/Flood",
                 RpcKind::ServerStreaming,
-                &rpc::Metadata::new(),
+                &triple_rpc::Metadata::new(),
             )
             .await
             .unwrap();
@@ -208,8 +214,8 @@ async fn response_backpressure_reaches_handler() {
         let mut incoming = response.receive().await.unwrap();
         counts.started.notified().await;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let frame_len = codec::encode_frame(
-            &rpc::encode_message(
+        let frame_len = triple_codec::encode_frame(
+            &triple_rpc::encode_message(
                 &Echo {
                     text: "x".repeat(size),
                 },
@@ -301,19 +307,19 @@ async fn shutdown_timeout_joins_hyper_stream_tasks() {
         Duration::from_millis(30),
     )
     .await;
-    let mut client = rpc::Client::connect(&address, Limits::default())
+    let mut client = triple_rpc::Client::connect(&address, Limits::default())
         .await
         .unwrap();
     let mut calls = Vec::new();
     for _ in 0..3 {
-        let rpc::Call {
+        let triple_rpc::Call {
             mut requests,
             response,
         } = client
             .call_stream(
                 "/test.Flow/Block",
                 RpcKind::ServerStreaming,
-                &rpc::Metadata::new(),
+                &triple_rpc::Metadata::new(),
             )
             .await
             .unwrap();
@@ -337,20 +343,25 @@ async fn shutdown_timeout_joins_hyper_stream_tasks() {
 #[tokio::test]
 async fn responses_have_no_date_header() {
     let (address, stop, server) = start(Arc::new(EchoService), WAIT).await;
-    let mut client = transport::Client::connect(&address, Limits::default())
+    let mut client = triple_transport::Client::connect(&address, Limits::default())
         .await
         .unwrap();
     client.ready().await.unwrap();
-    let request = rpc::prepare_request(
+    let request = triple_rpc::prepare_request(
         &format!("http://{address}").parse().unwrap(),
         "/test.Echo/Unary",
-        &rpc::Metadata::new(),
+        &triple_rpc::Metadata::new(),
         None,
         Limits::default(),
     )
     .unwrap();
     let (response, stream) = client.send_request(request, false).unwrap();
-    let mut outgoing = Outgoing::new(stream, Limits::default(), true, rpc::SendRole::Request);
+    let mut outgoing = Outgoing::new(
+        stream,
+        Limits::default(),
+        true,
+        triple_rpc::SendRole::Request,
+    );
     outgoing
         .send(&Echo {
             text: "date".into(),
@@ -390,9 +401,10 @@ async fn handler_future_is_dropped_when_response_body_is_dropped() {
                     hyper::service::service_fn(move |request| {
                         let (tasks, service, sent) = (tasks.clone(), service.clone(), sent.clone());
                         async move {
-                            let response = rpc::handle(request, service, Limits::default(), tasks)
-                                .await
-                                .unwrap();
+                            let response =
+                                triple_rpc::handle(request, service, Limits::default(), tasks)
+                                    .await
+                                    .unwrap();
                             sent.send(response.into_body()).await.unwrap();
                             Ok::<_, std::convert::Infallible>(hyper::Response::new(
                                 http_body_util::Full::new(bytes::Bytes::new()),
@@ -403,17 +415,17 @@ async fn handler_future_is_dropped_when_response_body_is_dropped() {
         tokio::pin!(connection);
         tokio::select! { result = &mut connection => result.unwrap(), _ = shutdown.cancelled() => {} }
     });
-    let mut client = rpc::Client::connect(&address.to_string(), Limits::default())
+    let mut client = triple_rpc::Client::connect(&address.to_string(), Limits::default())
         .await
         .unwrap();
-    let rpc::Call {
+    let triple_rpc::Call {
         mut requests,
         response,
     } = client
         .call_stream(
             "/test.Flow/Block",
             RpcKind::ServerStreaming,
-            &rpc::Metadata::new(),
+            &triple_rpc::Metadata::new(),
         )
         .await
         .unwrap();

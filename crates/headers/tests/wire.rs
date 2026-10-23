@@ -16,11 +16,11 @@
 //! Independent vectors for the public header and final-status API.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use headers::{
+use http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
+use triple_headers::{
     Code, Error, Metadata, Status, check_request_headers, check_response_headers, http_error,
     parse_status, request_headers, response_headers, status_headers, validate_request,
 };
-use http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 
 #[test]
 fn request_fields_preserve_authority_path_metadata_and_raw_timeout() {

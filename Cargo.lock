@@ -178,14 +178,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
-name = "codec"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "thiserror",
-]
-
-[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -400,17 +392,6 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
-
-[[package]]
-name = "headers"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "http",
- "prost",
- "thiserror",
- "triple-core",
-]
 
 [[package]]
 name = "heck"
@@ -828,6 +809,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "protos"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "prost",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+]
+
+[[package]]
 name = "pulldown-cmark"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -920,44 +912,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "rpc"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "codec",
- "h2",
- "headers",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-util",
- "prost",
- "rcgen",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "transport",
- "triple-core",
-]
-
-[[package]]
 name = "rpc-interop"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
- "anyhow",
  "hyper",
  "hyper-util",
  "prost",
- "rpc",
+ "protos",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "transport",
+ "triple-rpc",
+ "triple-transport",
 ]
 
 [[package]]
@@ -1405,45 +1372,75 @@ dependencies = [
 ]
 
 [[package]]
-name = "transport"
-version = "0.1.0"
+name = "triple-codec"
+version = "0.0.0"
 dependencies = [
  "bytes",
- "codec",
- "h2",
- "http",
  "thiserror",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
 name = "triple-core"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
+name = "triple-headers"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "http",
+ "prost",
+ "thiserror",
+ "triple-core",
+]
+
+[[package]]
 name = "triple-http"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bytes",
  "flate2",
- "headers",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "prost",
+ "protos",
  "serde_json",
  "tokio",
  "triple-core",
+ "triple-headers",
+]
+
+[[package]]
+name = "triple-rpc"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "h2",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "prost",
+ "rcgen",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "triple-codec",
+ "triple-core",
+ "triple-headers",
+ "triple-transport",
 ]
 
 [[package]]
 name = "triple-server"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bytes",
  "hpack",
@@ -1453,18 +1450,31 @@ dependencies = [
  "hyper-util",
  "libc",
  "prost",
+ "protos",
  "rcgen",
- "rpc",
- "rpc-interop",
  "serde_json",
  "thiserror",
  "tokio",
  "tokio-rustls",
  "tokio-util",
  "tonic",
- "transport",
  "triple-core",
  "triple-http",
+ "triple-rpc",
+ "triple-transport",
+]
+
+[[package]]
+name = "triple-transport"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "h2",
+ "http",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "triple-codec",
 ]
 
 [[package]]

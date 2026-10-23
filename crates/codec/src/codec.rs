@@ -48,13 +48,13 @@ impl State {
 ///
 /// ```
 /// use bytes::Bytes;
-/// use codec::FrameDecoder;
+/// use triple_codec::FrameDecoder;
 /// let mut decoder = FrameDecoder::new(16);
 /// let mut wire = Bytes::from_static(&[0, 0, 0, 0, 2, 8, 7]);
 /// assert_eq!(decoder.decode(&mut wire)?, Some(Bytes::from_static(&[8, 7])));
 /// assert!(wire.is_empty());
 /// decoder.finish()?;
-/// # Ok::<(), codec::Error>(())
+/// # Ok::<(), triple_codec::Error>(())
 /// ```
 #[derive(Debug)]
 pub struct FrameDecoder {

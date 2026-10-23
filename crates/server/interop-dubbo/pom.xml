@@ -19,6 +19,7 @@
       <plugin>
         <groupId>org.xolstice.maven.plugins</groupId><artifactId>protobuf-maven-plugin</artifactId><version>0.6.1</version>
         <configuration>
+          <protoSourceRoot>${project.basedir}/../../protos/proto</protoSourceRoot>
           <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
           <protocPlugins><protocPlugin><id>dubbo</id><groupId>org.apache.dubbo</groupId><artifactId>dubbo-compiler</artifactId><version>${dubbo.version}</version><mainClass>org.apache.dubbo.gen.tri.Dubbo3TripleGenerator</mainClass></protocPlugin></protocPlugins>
         </configuration>

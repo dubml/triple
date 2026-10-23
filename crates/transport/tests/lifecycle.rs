@@ -30,7 +30,7 @@ use tokio::{
     sync::Notify,
     task::{JoinHandle, JoinSet},
 };
-use transport::{
+use triple_transport::{
     CancellationToken, Client, Error, Limits, Receiver, Result, Sender, serve_connection,
 };
 
@@ -405,9 +405,9 @@ async fn malformed_frames_from_raw_http2_peer_propagate_once() {
         assert!(matches!(
             incoming.message().await,
             Err(Error::Frame(
-                codec::Error::TruncatedFrame
-                    | codec::Error::LimitExceeded { .. }
-                    | codec::Error::InvalidCompressionFlag(2)
+                triple_codec::Error::TruncatedFrame
+                    | triple_codec::Error::LimitExceeded { .. }
+                    | triple_codec::Error::InvalidCompressionFlag(2)
             ))
         ));
         assert!(incoming.message().await.unwrap().is_none());

@@ -14,14 +14,14 @@
 // limitations under the License.
 
 #![allow(missing_docs, dead_code)]
-use rpc::{
-    CancellationToken, Code, Error, Incoming, Limits, Metadata, Outgoing, Result, RpcKind, Service,
-    Status, serve_connection,
-};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     net::TcpListener,
     task::{JoinHandle, JoinSet},
+};
+use triple_rpc::{
+    CancellationToken, Code, Error, Incoming, Limits, Metadata, Outgoing, Result, RpcKind, Service,
+    Status, serve_connection,
 };
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct Echo {
@@ -148,10 +148,10 @@ pub async fn spawn_server(
 ) -> Result<(String, CancellationToken, JoinHandle<Result<()>>)> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(transport::Error::from)?;
+        .map_err(triple_transport::Error::from)?;
     let address = listener
         .local_addr()
-        .map_err(transport::Error::from)?
+        .map_err(triple_transport::Error::from)?
         .to_string();
     let shutdown = CancellationToken::new();
     let stop = shutdown.clone();
@@ -161,7 +161,7 @@ pub async fn spawn_server(
             tokio::select! {
                 _ = stop.cancelled() => break,
                 accepted = listener.accept() => {
-                    let (io, _) = accepted.map_err(transport::Error::from)?;
+                    let (io, _) = accepted.map_err(triple_transport::Error::from)?;
                     connections.spawn(serve_connection(io, Arc::new(EchoService), limits, stop.clone(), Duration::from_secs(1)));
                 }
             }
@@ -170,7 +170,8 @@ pub async fn spawn_server(
             match result.map_err(|_| Error::InvalidHeader("test server task"))? {
                 Ok(()) => {}
                 // A peer dropping its TCP connection may produce ECONNRESET.
-                Err(Error::Transport(transport::Error::Transport(error))) if error.is_io() => {}
+                Err(Error::Transport(triple_transport::Error::Transport(error)))
+                    if error.is_io() => {}
                 Err(error) => return Err(error),
             }
         }

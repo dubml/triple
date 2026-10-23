@@ -19,10 +19,10 @@ use triple_server::{Result, Server};
 
 static CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
-pub async fn serve<S: rpc::Service + 'static, H: triple_http::UnaryHandler + 'static>(
+pub async fn serve<S: triple_rpc::Service + 'static, H: triple_http::UnaryHandler + 'static>(
     server: Arc<Server<S, H>>,
     listener: TcpListener,
-    stop: rpc::CancellationToken,
+    stop: triple_rpc::CancellationToken,
 ) -> Result<()> {
     let mut tasks = JoinSet::new();
     loop {

@@ -3,19 +3,24 @@
 
 use std::time::Duration;
 
-use rpc::{CancellationToken, Code, Deadline, Error, Limits, Status};
-use rpc_interop::proto::{EchoMessage, echo_client::EchoClient};
+use protos::echo::{EchoMessage, echo_client::EchoClient};
 use tokio::net::TcpListener;
+use triple_rpc::{CancellationToken, Code, Deadline, Error, Limits, Status};
 
 struct ExpiredService;
-impl rpc::Service for ExpiredService {
+impl triple_rpc::Service for ExpiredService {
     fn contains(&self, _: &str) -> bool {
         true
     }
-    fn kind(&self, _: &str) -> Option<rpc::RpcKind> {
-        Some(rpc::RpcKind::Unary)
+    fn kind(&self, _: &str) -> Option<triple_rpc::RpcKind> {
+        Some(triple_rpc::RpcKind::Unary)
     }
-    async fn call(&self, _: &str, _: &mut rpc::Incoming, _: &mut rpc::Outgoing) -> rpc::Result<()> {
+    async fn call(
+        &self,
+        _: &str,
+        _: &mut triple_rpc::Incoming,
+        _: &mut triple_rpc::Outgoing,
+    ) -> triple_rpc::Result<()> {
         Err(Status::new(Code::DeadlineExceeded, "expired").into())
     }
 }
@@ -47,7 +52,7 @@ async fn tonic_zero_timeout_reaches_wire_and_native_parser_marks_it_expired() {
                                     .unwrap_err();
                                 assert!(matches!(error, Error::DeadlineExceeded));
                                 sent.send(timeout.to_owned()).unwrap();
-                                rpc::handle(
+                                triple_rpc::handle(
                                     request,
                                     std::sync::Arc::new(ExpiredService),
                                     Limits::default(),

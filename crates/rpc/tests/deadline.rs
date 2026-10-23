@@ -16,8 +16,8 @@
 //! Timeout grammar, expiration and forwarding tests.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rpc::{Deadline, Error};
 use std::time::Duration;
+use triple_rpc::{Deadline, Error};
 
 #[test]
 fn all_timeout_units_and_eight_digit_boundary() {

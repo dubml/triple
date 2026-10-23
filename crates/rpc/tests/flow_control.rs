@@ -9,13 +9,15 @@ use std::{
     time::Duration,
 };
 
-use rpc::{CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service, serve_connection};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::Notify,
     task::JoinHandle,
     time::timeout,
+};
+use triple_rpc::{
+    CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service, serve_connection,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -37,8 +39,8 @@ impl Service for UnusedService {
         _path: &str,
         _request: &mut Incoming,
         _response: &mut Outgoing,
-    ) -> rpc::Result<()> {
-        Err(rpc::Status::new(rpc::Code::Unimplemented, "no methods").into())
+    ) -> triple_rpc::Result<()> {
+        Err(triple_rpc::Status::new(triple_rpc::Code::Unimplemented, "no methods").into())
     }
 }
 
@@ -71,7 +73,7 @@ async fn read_frame(socket: &mut TcpStream) -> TestResult<Frame> {
 struct RawPeer {
     socket: TcpStream,
     shutdown: CancellationToken,
-    server: JoinHandle<rpc::Result<()>>,
+    server: JoinHandle<triple_rpc::Result<()>>,
 }
 
 impl RawPeer {
@@ -202,12 +204,12 @@ impl Service for StreamingService {
         _path: &str,
         request: &mut Incoming,
         response: &mut Outgoing,
-    ) -> rpc::Result<()> {
+    ) -> triple_rpc::Result<()> {
         let _guard = HandlerGuard(Arc::clone(&self.0));
         request
             .message::<Payload>()
             .await?
-            .ok_or(rpc::Error::Cardinality("request"))?;
+            .ok_or(triple_rpc::Error::Cardinality("request"))?;
         let message = Payload {
             data: vec![b'x'; 32 * 1024],
         };
@@ -222,7 +224,7 @@ impl Service for StreamingService {
 
 struct ServerTask {
     shutdown: CancellationToken,
-    task: JoinHandle<rpc::Result<()>>,
+    task: JoinHandle<triple_rpc::Result<()>>,
 }
 
 impl ServerTask {
@@ -267,25 +269,25 @@ async fn stalled_response_deadline_drops_handler_and_preserves_wire_result() -> 
     });
     let server = ServerTask { shutdown, task };
     let limits = Limits::default();
-    let mut client = transport::Client::connect(&address.to_string(), limits).await?;
+    let mut client = triple_transport::Client::connect(&address.to_string(), limits).await?;
     client.ready().await?;
     let expiry = tokio::time::Instant::now() + Duration::from_millis(300);
-    let deadline = rpc::Deadline::after(Duration::from_millis(300))?;
+    let deadline = triple_rpc::Deadline::after(Duration::from_millis(300))?;
     // Only the server receives a deadline: a local RPC-client deadline would mask
     // its wire result when reading resumes after expiry. This test-only use of
     // the public RPC helpers and transport client is explicitly authorized.
-    let request = rpc::prepare_request(
+    let request = triple_rpc::prepare_request(
         &format!("http://{address}").parse()?,
         "/test.Flow/Stall",
-        &rpc::Metadata::new(),
+        &triple_rpc::Metadata::new(),
         Some(&deadline.to_header()?),
         limits,
     )?;
     let (response, stream) = client.send_request(request, false)?;
-    let mut requests = Outgoing::new(stream, limits, true, rpc::SendRole::Request);
+    let mut requests = Outgoing::new(stream, limits, true, triple_rpc::SendRole::Request);
     requests.send(&Payload { data: Vec::new() }).await?;
     requests.close()?;
-    let head = rpc::parse_response(
+    let head = triple_rpc::parse_response(
         timeout(IO_TIMEOUT, response).await??,
         limits.max_header_size,
     )?;
@@ -323,10 +325,12 @@ async fn stalled_response_deadline_drops_handler_and_preserves_wire_result() -> 
                 Err(error) => {
                     println!("resumed reader error: {error:?}");
                     let terminal = match error {
-                        rpc::Error::Rpc(status) if status.code() == rpc::Code::DeadlineExceeded => {
+                        triple_rpc::Error::Rpc(status)
+                            if status.code() == triple_rpc::Code::DeadlineExceeded =>
+                        {
                             Terminal::DeadlineExceeded
                         }
-                        rpc::Error::Transport(transport::Error::Transport(error))
+                        triple_rpc::Error::Transport(triple_transport::Error::Transport(error))
                             if error.is_reset() =>
                         {
                             Terminal::Reset(error.reason().ok_or("reset has no reason")?)

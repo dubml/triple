@@ -1,0 +1,17 @@
+[package]
+name = "protos"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+prost.workspace = true
+tonic = "=0.14.6"
+tonic-prost = "=0.14.6"
+
+[build-dependencies]
+anyhow = "1"
+tonic-prost-build = "=0.14.6"
+
+[lints]
+workspace = true

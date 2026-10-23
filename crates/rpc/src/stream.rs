@@ -69,7 +69,7 @@ impl Outgoing {
     /// Wraps an HTTP/2 sender with the cardinality selected by a protocol adapter.
     pub fn new(stream: SendStream<Bytes>, limits: Limits, single: bool, role: SendRole) -> Self {
         Self {
-            sender: crate::backend::Sender::H2(transport::Sender::new(
+            sender: crate::backend::Sender::H2(triple_transport::Sender::new(
                 stream,
                 limits.max_message_size,
             )),
@@ -149,7 +149,7 @@ impl Outgoing {
             return Err(Error::Cardinality("response"));
         }
         let trailers =
-            headers::status_headers(status, &self.trailers, self.limits.max_header_size)?;
+            triple_headers::status_headers(status, &self.trailers, self.limits.max_header_size)?;
         self.sender.finish(trailers)
     }
 
@@ -193,7 +193,7 @@ impl Incoming {
         expect_status: bool,
     ) -> Self {
         Self {
-            receiver: crate::backend::Receiver::H2(transport::Receiver::new(
+            receiver: crate::backend::Receiver::H2(triple_transport::Receiver::new(
                 stream,
                 limits.max_message_size,
             )),
@@ -223,7 +223,7 @@ impl Incoming {
             receiver: crate::backend::Receiver::Hyper {
                 body,
                 input: Bytes::new(),
-                decoder: codec::FrameDecoder::new(limits.max_message_size),
+                decoder: triple_codec::FrameDecoder::new(limits.max_message_size),
                 trailers: None,
                 closed: false,
             },
@@ -305,18 +305,20 @@ impl Incoming {
         }
         self.state = ReceiveState::Closed;
         if let Some(trailers) = self.receiver.trailers() {
-            headers::check_headers(trailers, self.limits.max_header_size)?;
-            self.trailers =
-                Metadata::from_headers_with_reserved(trailers, headers::is_grpc_reserved_header)?;
+            triple_headers::check_headers(trailers, self.limits.max_header_size)?;
+            self.trailers = Metadata::from_headers_with_reserved(
+                trailers,
+                triple_headers::is_grpc_reserved_header,
+            )?;
             if self.expect_status {
-                return self.final_status(headers::parse_status(
+                return self.final_status(triple_headers::parse_status(
                     trailers,
                     self.limits.max_header_size,
                 )?);
             }
         }
         if self.expect_status {
-            return Err(headers::Error::MissingStatus.into());
+            return Err(triple_headers::Error::MissingStatus.into());
         }
         self.final_status(Status::ok())
     }

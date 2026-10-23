@@ -17,8 +17,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
 use common::{Echo, spawn_server};
-use rpc::{Call, Client, Code, Error, Limits, Metadata, RpcKind};
 use std::time::Duration;
+use triple_rpc::{Call, Client, Code, Error, Limits, Metadata, RpcKind};
 #[tokio::test]
 async fn all_streaming_modes_and_independent_half_close() {
     let (address, stop, server) = spawn_server(Limits::default()).await.unwrap();
@@ -124,7 +124,7 @@ async fn empty_streams_are_valid_and_single_response_methods_still_require_one()
         requests.close().unwrap();
         assert!(matches!(
             requests.close(),
-            Err(Error::Transport(transport::Error::StreamClosed))
+            Err(Error::Transport(triple_transport::Error::StreamClosed))
         ));
         let mut incoming = response.receive().await.unwrap();
         if kind.single_response() {
@@ -289,7 +289,7 @@ async fn peer_reset_drops_streaming_handler_and_leaves_other_calls_usable() {
         entered: Arc<tokio::sync::Notify>,
         dropped: Arc<AtomicUsize>,
     }
-    impl rpc::Service for Tracked {
+    impl triple_rpc::Service for Tracked {
         fn contains(&self, _path: &str) -> bool {
             true
         }
@@ -303,9 +303,9 @@ async fn peer_reset_drops_streaming_handler_and_leaves_other_calls_usable() {
         async fn call(
             &self,
             path: &str,
-            request: &mut rpc::Incoming,
-            response: &mut rpc::Outgoing,
-        ) -> rpc::Result<()> {
+            request: &mut triple_rpc::Incoming,
+            response: &mut triple_rpc::Outgoing,
+        ) -> triple_rpc::Result<()> {
             let _guard = Guard(Arc::clone(&self.dropped));
             let message = request
                 .message::<Echo>()
@@ -326,11 +326,11 @@ async fn peer_reset_drops_streaming_handler_and_leaves_other_calls_usable() {
         entered: Arc::clone(&entered),
         dropped: Arc::clone(&dropped),
     });
-    let stop = rpc::CancellationToken::new();
+    let stop = triple_rpc::CancellationToken::new();
     let shutdown = stop.clone();
     let server = tokio::spawn(async move {
         let (io, _) = listener.accept().await.unwrap();
-        rpc::serve_connection(
+        triple_rpc::serve_connection(
             io,
             service,
             Limits::default(),

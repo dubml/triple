@@ -1,8 +1,8 @@
 //! Caller-selected reserved fields and the unchanged gRPC invalid Base64 policy.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use headers::{Error, Metadata, is_grpc_reserved_header};
 use http::{HeaderMap, HeaderValue};
+use triple_headers::{Error, Metadata, is_grpc_reserved_header};
 
 #[test]
 fn grpc_invalid_binary_metadata_fails_the_whole_parse() {

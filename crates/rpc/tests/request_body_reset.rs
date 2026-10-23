@@ -1,13 +1,13 @@
 //! Freezes the hyper request-body error variant after a peer resets partial DATA.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use rpc::{CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{Notify, mpsc},
 };
+use triple_rpc::{CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service};
 
 #[derive(Clone, PartialEq, prost::Message)]
 struct Message {
@@ -16,7 +16,7 @@ struct Message {
 }
 struct Reader {
     started: Notify,
-    errors: mpsc::Sender<rpc::Error>,
+    errors: mpsc::Sender<triple_rpc::Error>,
 }
 impl Service for Reader {
     fn contains(&self, _: &str) -> bool {
@@ -25,7 +25,12 @@ impl Service for Reader {
     fn kind(&self, _: &str) -> Option<RpcKind> {
         Some(RpcKind::ServerStreaming)
     }
-    async fn call(&self, _: &str, request: &mut Incoming, _: &mut Outgoing) -> rpc::Result<()> {
+    async fn call(
+        &self,
+        _: &str,
+        request: &mut Incoming,
+        _: &mut Outgoing,
+    ) -> triple_rpc::Result<()> {
         self.started.notify_one();
         let error = request.message::<Message>().await.unwrap_err();
         self.errors.send(error).await.unwrap();
@@ -50,7 +55,7 @@ async fn request_body_reset_surfaces_as_io_error() {
         let (io, _) = listener.accept().await.unwrap();
         let tracker = tokio_util::task::TaskTracker::new();
         let calls = tracker.clone();
-        let connection = hyper::server::conn::http2::Builder::new(rpc::StreamExecutor::new(
+        let connection = hyper::server::conn::http2::Builder::new(triple_rpc::StreamExecutor::new(
             tracker.clone(),
             shutdown.clone(),
         ))
@@ -59,7 +64,7 @@ async fn request_body_reset_surfaces_as_io_error() {
             hyper::service::service_fn(move |request| {
                 let (handler, calls, bodies) = (handler.clone(), calls.clone(), bodies.clone());
                 async move {
-                    let response = rpc::handle(request, handler, Limits::default(), calls)
+                    let response = triple_rpc::handle(request, handler, Limits::default(), calls)
                         .await
                         .unwrap();
                     // Keep the RPC body alive so response cancellation cannot win
@@ -118,7 +123,7 @@ async fn request_body_reset_surfaces_as_io_error() {
         .unwrap()
         .unwrap();
     println!("request body reset: {error:?}");
-    assert!(matches!(error, rpc::Error::Io(_)));
+    assert!(matches!(error, triple_rpc::Error::Io(_)));
     drop(body);
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(2), server)

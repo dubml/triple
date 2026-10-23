@@ -14,14 +14,13 @@
 # limitations under the License.
 
 [package]
-name = "transport"
-version = "0.1.0"
+name = "triple-transport"
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
-codec = { path = "../codec" }
+triple-codec = { path = "../codec" }
 bytes.workspace = true
 h2.workspace = true
 http.workspace = true

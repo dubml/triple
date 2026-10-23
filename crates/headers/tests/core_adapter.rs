@@ -1,9 +1,9 @@
 //! Existing wire adapters share semantic types without moving wire formats into the core.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use headers::{Metadata, Status, parse_status, request_headers, status_headers};
 use http::{HeaderMap, HeaderValue};
 use triple_core::Code;
+use triple_headers::{Metadata, Status, parse_status, request_headers, status_headers};
 
 #[test]
 fn metadata_moves_to_binding_and_round_trips_decoded_values() {
@@ -96,14 +96,14 @@ fn invalid_ascii_metadata_is_discarded_and_recorded_without_request_failure() {
 fn timeout_helpers_delegate_to_shared_core_parsers() {
     for input in ["1", "3000", "0", "-1", ""] {
         assert_eq!(
-            headers::parse_tri_service_timeout(input),
+            triple_headers::parse_tri_service_timeout(input),
             triple_core::parse_tri_service_timeout(input),
             "tri: {input}"
         );
     }
     for input in ["1H", "1M", "1S", "1m", "1u", "1n", "0n", "1X", ""] {
         assert_eq!(
-            headers::parse_grpc_timeout(input),
+            triple_headers::parse_grpc_timeout(input),
             triple_core::parse_grpc_timeout(input),
             "grpc: {input}"
         );

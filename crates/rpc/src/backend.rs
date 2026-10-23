@@ -14,7 +14,7 @@ impl Drop for SendGuard {
 }
 
 pub(crate) enum Sender {
-    H2(transport::Sender),
+    H2(triple_transport::Sender),
     Hyper {
         data: mpsc::Sender<Bytes>,
         final_status: Option<oneshot::Sender<HeaderMap>>,
@@ -27,7 +27,8 @@ impl Sender {
         match self {
             Self::H2(sender) => Ok(sender.send(payload).await?),
             Self::Hyper { data, reset, .. } => {
-                let frame = codec::encode_frame(payload, limit).map_err(transport::Error::from)?;
+                let frame = triple_codec::encode_frame(payload, limit)
+                    .map_err(triple_transport::Error::from)?;
                 let mut guard = SendGuard(Some(reset.clone()));
                 data.send(frame).await.map_err(|_| Error::Cancelled)?;
                 guard.0 = None;
@@ -77,11 +78,11 @@ impl Sender {
 }
 
 pub(crate) enum Receiver {
-    H2(transport::Receiver),
+    H2(triple_transport::Receiver),
     Hyper {
         body: hyper::body::Incoming,
         input: Bytes,
-        decoder: codec::FrameDecoder,
+        decoder: triple_codec::FrameDecoder,
         trailers: Option<HeaderMap>,
         closed: bool,
     },
@@ -102,7 +103,10 @@ impl Receiver {
                     return Ok(None);
                 }
                 loop {
-                    if let Some(payload) = decoder.decode(input).map_err(transport::Error::from)? {
+                    if let Some(payload) = decoder
+                        .decode(input)
+                        .map_err(triple_transport::Error::from)?
+                    {
                         return Ok(Some(payload));
                     }
                     match body.frame().await {
@@ -116,7 +120,7 @@ impl Receiver {
                         },
                         Some(Err(error)) => return Err(Error::Io(std::io::Error::other(error))),
                         None => {
-                            decoder.finish().map_err(transport::Error::from)?;
+                            decoder.finish().map_err(triple_transport::Error::from)?;
                             *closed = true;
                             return Ok(None);
                         }

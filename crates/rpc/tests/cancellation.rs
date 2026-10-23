@@ -17,8 +17,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
 use common::{Echo, spawn_server};
-use rpc::{Call, CallOptions, Client, Deadline, Error, Limits, RpcKind};
 use std::time::Duration;
+use triple_rpc::{Call, CallOptions, Client, Deadline, Error, Limits, RpcKind};
 #[tokio::test]
 async fn deadline_and_cancellation_do_not_kill_other_streams() {
     let (address, stop, server) = spawn_server(Limits::default()).await.unwrap();

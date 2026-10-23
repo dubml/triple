@@ -4,13 +4,13 @@ mod common;
 use std::{error::Error, sync::Arc, time::Duration};
 
 use common::EchoService;
-use rpc::{CancellationToken, Limits, serve_connection};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
     time::timeout,
 };
+use triple_rpc::{CancellationToken, Limits, serve_connection};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error + Send + Sync>>;
 

@@ -195,12 +195,13 @@ fn immediate(status: &Status, limits: Limits) -> Result<Response<ResponseBody>> 
     drop(sender);
     body.ended = true;
     let mut response = Response::new(body);
-    let mut fields = headers::status_headers(status, &Metadata::new(), limits.max_header_size)?;
-    fields.extend(headers::response_headers(
+    let mut fields =
+        triple_headers::status_headers(status, &Metadata::new(), limits.max_header_size)?;
+    fields.extend(triple_headers::response_headers(
         &Metadata::new(),
         limits.max_header_size,
     )?);
-    headers::check_response_headers(&fields, limits.max_header_size)?;
+    triple_headers::check_response_headers(&fields, limits.max_header_size)?;
     *response.headers_mut() = fields;
     Ok(response)
 }
@@ -218,7 +219,7 @@ pub async fn handle<S: Service + 'static>(
     tracker: TaskTracker,
 ) -> Result<Response<ResponseBody>> {
     let path = request.uri().path_and_query().map_or("", |v| v.as_str());
-    let deadline = match headers::validate_request(
+    let deadline = match triple_headers::validate_request(
         request.method(),
         path,
         request.headers(),
@@ -231,7 +232,7 @@ pub async fn handle<S: Service + 'static>(
         Err(error) => {
             if matches!(
                 error,
-                Error::Headers(headers::Error::InvalidHeader("content-type"))
+                Error::Headers(triple_headers::Error::InvalidHeader("content-type"))
             ) {
                 let mut response = immediate(&Status::ok(), limits)?;
                 response.headers_mut().clear();
@@ -247,7 +248,7 @@ pub async fn handle<S: Service + 'static>(
     };
     let metadata = match Metadata::from_headers_with_reserved(
         request.headers(),
-        headers::is_grpc_reserved_header,
+        triple_headers::is_grpc_reserved_header,
     ) {
         Ok(metadata) => metadata,
         Err(error) => return immediate(&crate::CallError::into_status(Error::from(error)), limits),
@@ -275,7 +276,7 @@ pub async fn handle<S: Service + 'static>(
     };
     let mut response = Response::new(body);
     *response.headers_mut() =
-        headers::response_headers(&response_metadata, limits.max_header_size)?;
+        triple_headers::response_headers(&response_metadata, limits.max_header_size)?;
     let mut outgoing =
         Outgoing::for_hyper(sender, limits, kind.single_response()).with_context(context.clone());
     tracker.spawn(async move {
@@ -343,8 +344,8 @@ where
     let mut builder = hyper::server::conn::http2::Builder::new(executor);
     let settings = crate::http2_settings(limits);
     let header_limit = u32::try_from(settings.max_header_list_size)
-        .map_err(|_| transport::Error::InvalidConfig("header limit"))?;
-    // Match transport::server: header limit and concurrent streams are Limits;
+        .map_err(|_| triple_transport::Error::InvalidConfig("header limit"))?;
+    // Match triple_transport::server: header limit and concurrent streams are Limits;
     // its fixed h2 defaults are 16384-byte frames and 65535-byte windows.
     builder
         .max_header_list_size(header_limit)
@@ -389,7 +390,7 @@ where
                         Ok(result) => connection_result(result),
                         Err(_) => Ok(()),
                     },
-                    None => Err(transport::Error::InvalidConfig("shutdown timeout overflow").into()),
+                    None => Err(triple_transport::Error::InvalidConfig("shutdown timeout overflow").into()),
                 }
             }
         },

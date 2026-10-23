@@ -1,7 +1,7 @@
 //! Observes shutdown while the single-port server is still identifying HTTP.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[path = "../examples/common/mod.rs"]
+#[path = "../fake/common/mod.rs"]
 mod demo;
 
 use std::{sync::Arc, time::Duration};
@@ -17,7 +17,7 @@ async fn pre_cancelled_protocol_detection_returns_interrupted_without_draining()
         },
     );
     let (io, _peer) = tokio::io::duplex(64);
-    let stop = rpc::CancellationToken::new();
+    let stop = triple_rpc::CancellationToken::new();
     stop.cancel();
     let started = std::time::Instant::now();
     let result = tokio::time::timeout(Duration::from_secs(2), server.serve_connection(io, stop))

@@ -44,8 +44,10 @@ pub(crate) fn parse(fields: &HeaderMap) -> (Metadata, Vec<String>) {
         }
         let mut entry = HeaderMap::new();
         entry.append(name.clone(), value.clone());
-        let parsed = match headers::Metadata::from_headers_with_reserved(&entry, is_reserved_header)
-        {
+        let parsed = match triple_headers::Metadata::from_headers_with_reserved(
+            &entry,
+            is_reserved_header,
+        ) {
             Ok(parsed) => parsed,
             Err(_) => {
                 discarded.push(name.as_str().to_owned());

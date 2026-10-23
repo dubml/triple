@@ -10,7 +10,7 @@ rich status 描述缺失。HTTP/1.1 JSON 路径只有 curl 参与。
 
 1. demo.Greeter/SayHello 同时注册在 RPC 与 HTTP 绑定。
    Protobuf HelloRequest.name=1、HelloReply.message=1；Missing 未注册。
-2. examples/server.rs 读取 TRIPLE_LISTEN，默认 127.0.0.1:50051。
+2. fake/server.rs 读取 TRIPLE_LISTEN，默认 127.0.0.1:50051。
    0.0.0.0:50051 仅用于应对官方回环地址过滤。
    客户端仍用 setUrl("tri://127.0.0.1:50051")，过滤仍发生，实际连接 192.168.2.1。
    没有反射、修改官方库或本地代理。
@@ -47,7 +47,7 @@ timestamp_unix_ms=1791963481254，elapsed_us=302350（302.350 ms）。
 ## Fail 二维对照
 
 四个方法同为 PERMISSION_DENIED(7)，其余条件相同。
-公开 rpc::Status::new 默认 details 为空；不带 details 的两组直接用它构造。
+公开 triple_rpc::Status::new 默认 details 为空；不带 details 的两组直接用它构造。
 带 details 的两组保持 with_details(&[8, 7])，线路 Base64 为 CAc。
 
 | 方法 | 线路 grpc-status | HPACK 解码 grpc-message 原值 | grpc-status-details-bin | 客户端 StatusRpcException 状态与消息 | 原消息断言 | 裁定 |

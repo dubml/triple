@@ -21,7 +21,7 @@ pub enum Error {
     InvalidConfig(&'static str),
     /// A bounded frame could not be encoded or decoded.
     #[error(transparent)]
-    Frame(#[from] codec::Error),
+    Frame(#[from] triple_codec::Error),
     /// The HTTP/2 connection or stream failed.
     #[error("HTTP/2 error: {0}")]
     Transport(#[from] h2::Error),

@@ -12,7 +12,6 @@
 use bytes::Bytes;
 use http_body_util::Either;
 use hyper_util::rt::{TokioIo, TokioTimer};
-use rpc::{CancellationToken, StreamExecutor};
 use std::{
     future::Future,
     pin::Pin,
@@ -31,6 +30,7 @@ use tokio::{
 use tokio_util::task::TaskTracker;
 use triple_core::{Path, Status};
 use triple_http::{CallContext, Encoding, UnaryHandler};
+use triple_rpc::{CancellationToken, StreamExecutor};
 
 const WAIT: Duration = Duration::from_secs(2);
 const DRAIN: Duration = Duration::from_millis(30);
@@ -158,7 +158,7 @@ async fn serve(
         .http1()
         .timer(TokioTimer::new())
         .header_read_timeout(Duration::from_secs(10));
-    let s = rpc::http2_settings(rpc::Limits::default());
+    let s = triple_rpc::http2_settings(triple_rpc::Limits::default());
     builder
         .http2()
         .timer(TokioTimer::new())
@@ -250,7 +250,7 @@ async fn observe(large: bool, deadline: bool) {
         written.clone(),
         stop.clone(),
     ));
-    let mut client = transport::Client::connect(&address, rpc::Limits::default())
+    let mut client = triple_transport::Client::connect(&address, triple_rpc::Limits::default())
         .await
         .unwrap();
     client.ready().await.unwrap();

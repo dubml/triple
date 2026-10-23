@@ -19,13 +19,7 @@ use std::{pin::Pin, time::Duration};
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
 
-/// Generated fixture messages, client and server bindings.
-#[allow(missing_docs)]
-pub mod proto {
-    tonic::include_proto!("test");
-}
-
-use proto::{EchoMessage, echo_server::Echo};
+use protos::echo::{EchoMessage, echo_server::Echo};
 
 type EchoStream = Pin<Box<dyn Stream<Item = Result<EchoMessage, Status>> + Send>>;
 
@@ -101,6 +95,28 @@ impl Echo for TonicEcho {
             "denied: 测试 %",
             vec![8, 7].into(),
         ))
+    }
+    async fn fail_plain(
+        &self,
+        _request: Request<EchoMessage>,
+    ) -> Result<Response<EchoMessage>, Status> {
+        Err(Status::with_details(
+            tonic::Code::PermissionDenied,
+            "denied: plain",
+            vec![8, 7].into(),
+        ))
+    }
+    async fn fail_no_details(
+        &self,
+        _request: Request<EchoMessage>,
+    ) -> Result<Response<EchoMessage>, Status> {
+        Err(Status::permission_denied("denied: 测试 %"))
+    }
+    async fn fail_no_details_plain(
+        &self,
+        _request: Request<EchoMessage>,
+    ) -> Result<Response<EchoMessage>, Status> {
+        Err(Status::permission_denied("denied: plain"))
     }
     async fn slow(&self, _request: Request<EchoMessage>) -> Result<Response<EchoMessage>, Status> {
         tokio::time::sleep(Duration::from_secs(60)).await;

@@ -13,10 +13,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Generates the independent fixture's Protobuf and Tonic bindings.
+syntax = "proto3";
+package test;
 
-fn main() -> anyhow::Result<()> {
-    println!("cargo:rerun-if-changed=proto/echo.proto");
-    tonic_prost_build::compile_protos("proto/echo.proto")?;
-    Ok(())
+option java_package = "test";
+option java_multiple_files = true;
+
+message EchoMessage {
+  string text = 1;
+}
+
+service Echo {
+  rpc Unary(EchoMessage) returns (EchoMessage);
+  rpc ServerStreaming(EchoMessage) returns (stream EchoMessage);
+  rpc ClientStreaming(stream EchoMessage) returns (EchoMessage);
+  rpc Bidirectional(stream EchoMessage) returns (stream EchoMessage);
+  rpc Fail(EchoMessage) returns (EchoMessage);
+  rpc FailPlain(EchoMessage) returns (EchoMessage);
+  rpc FailNoDetails(EchoMessage) returns (EchoMessage);
+  rpc FailNoDetailsPlain(EchoMessage) returns (EchoMessage);
+  rpc Slow(EchoMessage) returns (EchoMessage);
 }

@@ -24,14 +24,14 @@ use crate::{Error, Result};
 /// Application metadata preserving duplicate header values.
 ///
 /// ```
-/// use headers::Metadata;
+/// use triple_headers::Metadata;
 /// let mut metadata = Metadata::new();
 /// metadata.append_ascii("trace-id", "first")?;
 /// metadata.append_ascii("trace-id", "second")?;
 /// metadata.append_binary("trace-bin", &[0, 255])?;
 /// assert_eq!(metadata.ascii_values("trace-id").collect::<Vec<_>>(), ["first", "second"]);
 /// assert_eq!(metadata.binary_values("trace-bin")?, [vec![0, 255]]);
-/// # Ok::<(), headers::Error>(())
+/// # Ok::<(), triple_headers::Error>(())
 /// ```
 #[derive(Debug, Default, Clone)]
 pub struct Metadata {

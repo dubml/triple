@@ -32,7 +32,7 @@ pub use tokio_util::sync::CancellationToken;
 /// Connection header, frame payload and concurrent stream bounds.
 ///
 /// ```
-/// let limits = transport::Limits::default();
+/// let limits = triple_transport::Limits::default();
 /// assert_eq!(limits.max_message_size, 4 * 1024 * 1024);
 /// assert_eq!(limits.max_header_size, 8 * 1024);
 /// assert_eq!(limits.max_concurrent_streams, 128);

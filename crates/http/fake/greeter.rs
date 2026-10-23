@@ -11,21 +11,10 @@ use hyper_util::{
     server::conn::auto::Builder,
 };
 use prost::Message;
+use protos::greeter::{HelloReply, HelloRequest};
 use tokio::{net::TcpListener, task::JoinSet};
 use triple_core::{Code, Path, Status};
 use triple_http::{Binding, CallContext, Encoding, UnaryHandler};
-
-#[derive(Clone, PartialEq, Message)]
-struct HelloRequest {
-    #[prost(string, tag = "1")]
-    name: String,
-}
-
-#[derive(Clone, PartialEq, Message)]
-struct HelloReply {
-    #[prost(string, tag = "1")]
-    message: String,
-}
 
 struct Greeter;
 

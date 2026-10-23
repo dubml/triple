@@ -14,8 +14,7 @@
 # limitations under the License.
 
 [package]
-name = "codec"
-version = "0.1.0"
+name = "triple-codec"
 edition.workspace = true
 license.workspace = true
 publish = false

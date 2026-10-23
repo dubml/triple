@@ -14,8 +14,7 @@
 # limitations under the License.
 
 [package]
-name = "headers"
-version = "0.1.0"
+name = "triple-headers"
 edition.workspace = true
 license.workspace = true
 publish = false

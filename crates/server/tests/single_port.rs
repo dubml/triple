@@ -1,14 +1,13 @@
 //! Real single-port HTTP/1, HTTP/2, TLS, shutdown and flow-control tests.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-#[path = "../examples/common/mod.rs"]
+#[path = "../fake/common/mod.rs"]
 mod demo;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use prost::Message;
-use rpc::{CancellationToken, Incoming, Outgoing, RpcKind};
-use rpc_interop::proto::{EchoMessage, echo_client::EchoClient};
+use protos::echo::{EchoMessage, echo_client::EchoClient};
 use std::{
     sync::{
         Arc,
@@ -24,10 +23,11 @@ use tokio::{
 };
 use triple_core::{Path, Status};
 use triple_http::{CallContext, Encoding, UnaryHandler};
+use triple_rpc::{CancellationToken, Incoming, Outgoing, RpcKind};
 use triple_server::{Config, Server};
 
 const WAIT: Duration = Duration::from_secs(2);
-async fn start<S: rpc::Service + 'static, H: UnaryHandler + 'static>(
+async fn start<S: triple_rpc::Service + 'static, H: UnaryHandler + 'static>(
     rpc: Arc<S>,
     http: Arc<H>,
     config: Config,
@@ -270,26 +270,32 @@ async fn same_http2_connection_serves_grpc_then_json() {
     finish(stop, server).await;
 }
 
-fn tls_configs() -> (Arc<rpc::rustls::ServerConfig>, rpc::rustls::RootCertStore) {
+fn tls_configs() -> (
+    Arc<triple_rpc::rustls::ServerConfig>,
+    triple_rpc::rustls::RootCertStore,
+) {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let der = cert.cert.der().clone();
-    let mut roots = rpc::rustls::RootCertStore::empty();
+    let mut roots = triple_rpc::rustls::RootCertStore::empty();
     roots.add(der.clone()).unwrap();
-    let identity = rpc::Identity {
+    let identity = triple_rpc::Identity {
         certificates: vec![der],
-        private_key: rpc::rustls::pki_types::PrivatePkcs8KeyDer::from(
+        private_key: triple_rpc::rustls::pki_types::PrivatePkcs8KeyDer::from(
             cert.signing_key.serialize_der(),
         )
         .into(),
     };
-    (rpc::server_tls_config(identity, None).unwrap(), roots)
+    (
+        triple_rpc::server_tls_config(identity, None).unwrap(),
+        roots,
+    )
 }
 async fn tls_io(
     address: &str,
-    roots: rpc::rustls::RootCertStore,
+    roots: triple_rpc::rustls::RootCertStore,
     h2: bool,
 ) -> tokio_rustls::client::TlsStream<TcpStream> {
-    let mut config = (*rpc::client_tls_config(roots, None).unwrap()).clone();
+    let mut config = (*triple_rpc::client_tls_config(roots, None).unwrap()).clone();
     config.alpn_protocols = vec![if h2 {
         b"h2".to_vec()
     } else {
@@ -297,7 +303,7 @@ async fn tls_io(
     }];
     let io = tokio_rustls::TlsConnector::from(Arc::new(config))
         .connect(
-            rpc::rustls::pki_types::ServerName::try_from("localhost").unwrap(),
+            triple_rpc::rustls::pki_types::ServerName::try_from("localhost").unwrap(),
             TcpStream::connect(address).await.unwrap(),
         )
         .await
@@ -321,11 +327,11 @@ async fn single_port_tls_h2_grpc_json_and_http1_json_and_505_succeed() {
     };
     let (address, stop, server) =
         start(Arc::new(demo::Echo), Arc::new(demo::Greeter), config).await;
-    let mut client = rpc::Client::connect_tls(
+    let mut client = triple_rpc::Client::connect_tls(
         &address,
         "localhost",
-        rpc::client_tls_config(roots.clone(), None).unwrap(),
-        rpc::Limits::default(),
+        triple_rpc::client_tls_config(roots.clone(), None).unwrap(),
+        triple_rpc::Limits::default(),
     )
     .await
     .unwrap();
@@ -334,7 +340,7 @@ async fn single_port_tls_h2_grpc_json_and_http1_json_and_505_succeed() {
             .unary::<_, EchoMessage>(
                 "/test.Echo/Unary",
                 &EchoMessage { text: "TLS".into() },
-                &rpc::Metadata::new()
+                &triple_rpc::Metadata::new()
             )
             .await
             .unwrap()
@@ -439,10 +445,10 @@ async fn single_port_http2_settings_match_rpc() {
     let shutdown = stop.clone();
     let native = tokio::spawn(async move {
         let (io, _) = listener.accept().await.unwrap();
-        rpc::serve_connection(
+        triple_rpc::serve_connection(
             io,
             Arc::new(demo::Echo),
-            rpc::Limits::default(),
+            triple_rpc::Limits::default(),
             shutdown,
             Duration::from_millis(20),
         )
@@ -473,7 +479,7 @@ async fn single_port_http2_settings_match_rpc() {
             .any(|v| v[0] == 0 && v[1] == 1)
     );
     assert!(
-        rpc::http2_settings(rpc::Limits::default())
+        triple_rpc::http2_settings(triple_rpc::Limits::default())
             .keep_alive_interval
             .is_none()
     );
@@ -498,7 +504,7 @@ struct RpcWork {
     flood: bool,
     delay: Duration,
 }
-impl rpc::Service for RpcWork {
+impl triple_rpc::Service for RpcWork {
     fn contains(&self, _: &str) -> bool {
         true
     }
@@ -510,7 +516,7 @@ impl rpc::Service for RpcWork {
         _: &str,
         request: &mut Incoming,
         response: &mut Outgoing,
-    ) -> rpc::Result<()> {
+    ) -> triple_rpc::Result<()> {
         self.counts.active.fetch_add(1, Ordering::SeqCst);
         let _guard = Guard(self.counts.clone());
         request.message::<EchoMessage>().await?;
@@ -570,21 +576,23 @@ async fn single_port_stalled_peer_deadline_resets_stream() {
     )
     .await;
     // Match flow_control: server deadline only, with no local reader deadline.
-    let limits = rpc::Limits::default();
-    let mut client = transport::Client::connect(&address, limits).await.unwrap();
+    let limits = triple_rpc::Limits::default();
+    let mut client = triple_transport::Client::connect(&address, limits)
+        .await
+        .unwrap();
     client.ready().await.unwrap();
     let expiry = tokio::time::Instant::now() + Duration::from_millis(300);
-    let deadline = rpc::Deadline::after(Duration::from_millis(300)).unwrap();
-    let req = rpc::prepare_request(
+    let deadline = triple_rpc::Deadline::after(Duration::from_millis(300)).unwrap();
+    let req = triple_rpc::prepare_request(
         &format!("http://{address}").parse().unwrap(),
         "/test.Flow/Stall",
-        &rpc::Metadata::new(),
+        &triple_rpc::Metadata::new(),
         Some(&deadline.to_header().unwrap()),
         limits,
     )
     .unwrap();
     let (response, stream) = client.send_request(req, false).unwrap();
-    let mut requests = Outgoing::new(stream, limits, true, rpc::SendRole::Request);
+    let mut requests = Outgoing::new(stream, limits, true, triple_rpc::SendRole::Request);
     requests
         .send(&EchoMessage {
             text: String::new(),
@@ -592,7 +600,7 @@ async fn single_port_stalled_peer_deadline_resets_stream() {
         .await
         .unwrap();
     requests.close().unwrap();
-    let head = rpc::parse_response(response.await.unwrap(), limits.max_header_size).unwrap();
+    let head = triple_rpc::parse_response(response.await.unwrap(), limits.max_header_size).unwrap();
     assert!(head.status.is_none());
     let mut incoming = Incoming::new(head.body, head.metadata, limits, false, true);
     assert!(incoming.deadline().is_none());
@@ -617,7 +625,7 @@ async fn single_port_stalled_peer_deadline_resets_stream() {
                     assert_eq!(message.text.len(), 32 * 1024);
                     messages += 1;
                 }
-                Err(rpc::Error::Transport(transport::Error::Transport(error))) => {
+                Err(triple_rpc::Error::Transport(triple_transport::Error::Transport(error))) => {
                     assert!(error.is_reset());
                     println!("single-port stalled: messages={messages}, {error:?}");
                     return u32::from(error.reason().unwrap());

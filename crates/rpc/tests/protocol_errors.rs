@@ -21,16 +21,16 @@ mod common;
 use bytes::Bytes;
 use common::{Echo, spawn_server};
 use http::{Request, Response};
-use rpc::{Call, Client, Code, Error, Limits, Metadata};
 use std::{future::poll_fn, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
+use triple_rpc::{Call, Client, Code, Error, Limits, Metadata};
 
 struct BadResponseService;
 
-impl rpc::Service for BadResponseService {
+impl triple_rpc::Service for BadResponseService {
     fn contains(&self, _path: &str) -> bool {
         true
     }
@@ -38,9 +38,9 @@ impl rpc::Service for BadResponseService {
     async fn call(
         &self,
         path: &str,
-        request: &mut rpc::Incoming,
-        response: &mut rpc::Outgoing,
-    ) -> rpc::Result<()> {
+        request: &mut triple_rpc::Incoming,
+        response: &mut triple_rpc::Outgoing,
+    ) -> triple_rpc::Result<()> {
         let message = request
             .message::<Echo>()
             .await?
@@ -57,11 +57,11 @@ impl rpc::Service for BadResponseService {
 async fn server_reports_missing_and_excess_unary_response_as_internal_error() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
-    let stop = rpc::CancellationToken::new();
+    let stop = triple_rpc::CancellationToken::new();
     let shutdown = stop.clone();
     let server = tokio::spawn(async move {
         let (io, _) = listener.accept().await.unwrap();
-        rpc::serve_connection(
+        triple_rpc::serve_connection(
             io,
             std::sync::Arc::new(BadResponseService),
             Limits::default(),
@@ -271,8 +271,10 @@ async fn client_rejects_missing_status_truncation_and_duplicate_messages() {
         assert!(
             matches!(
                 error,
-                Error::Headers(headers::Error::MissingStatus)
-                    | Error::Transport(transport::Error::Frame(codec::Error::TruncatedFrame))
+                Error::Headers(triple_headers::Error::MissingStatus)
+                    | Error::Transport(triple_transport::Error::Frame(
+                        triple_codec::Error::TruncatedFrame
+                    ))
                     | Error::Cardinality(_)
             ),
             "{error:?}"
@@ -303,7 +305,7 @@ async fn client_maps_http_errors_and_rejects_non_protobuf_content() {
         } else {
             assert!(matches!(
                 error,
-                Error::Headers(headers::Error::InvalidHeader("content-type"))
+                Error::Headers(triple_headers::Error::InvalidHeader("content-type"))
             ));
         }
         drop(client);

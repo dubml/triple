@@ -1,7 +1,6 @@
 //! Cancellation distinguishes incomplete prefaces from established HTTP/2.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rpc::{CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service};
 use std::{
     pin::Pin,
     sync::{
@@ -16,6 +15,7 @@ use tokio::{
     sync::Notify,
     task::JoinHandle,
 };
+use triple_rpc::{CancellationToken, Incoming, Limits, Outgoing, RpcKind, Service};
 
 const PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const WAIT: Duration = Duration::from_secs(2);
@@ -77,7 +77,7 @@ impl Service for Held {
     fn kind(&self, _: &str) -> Option<RpcKind> {
         Some(RpcKind::Bidirectional)
     }
-    async fn call(&self, _: &str, _: &mut Incoming, _: &mut Outgoing) -> rpc::Result<()> {
+    async fn call(&self, _: &str, _: &mut Incoming, _: &mut Outgoing) -> triple_rpc::Result<()> {
         self.0.calls.fetch_add(1, SeqCst);
         let _guard = Guard(self.0.clone());
         self.0.started.notify_one();
@@ -89,8 +89,8 @@ fn start(
     counts: Arc<Counts>,
     stop: CancellationToken,
     budget: Duration,
-) -> JoinHandle<rpc::Result<()>> {
-    tokio::spawn(rpc::serve_connection(
+) -> JoinHandle<triple_rpc::Result<()>> {
+    tokio::spawn(triple_rpc::serve_connection(
         ObservedIo(io, counts.clone()),
         Arc::new(Held(counts)),
         Limits::default(),
@@ -98,7 +98,7 @@ fn start(
         budget,
     ))
 }
-async fn joined(server: JoinHandle<rpc::Result<()>>) -> rpc::Result<()> {
+async fn joined(server: JoinHandle<triple_rpc::Result<()>>) -> triple_rpc::Result<()> {
     tokio::time::timeout(WAIT, server).await.unwrap().unwrap()
 }
 async fn read_bytes(counts: &Counts, expected: usize) {
@@ -221,7 +221,7 @@ async fn invalid_preface_preserves_hyper_protocol_error() {
         .unwrap();
     let error = joined(server).await.unwrap_err();
     println!("invalid preface: result={error:?}");
-    assert!(matches!(error, rpc::Error::Io(_)));
+    assert!(matches!(error, triple_rpc::Error::Io(_)));
     let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
     let mut reason = None;
     while let Some(current) = cause {
@@ -241,11 +241,15 @@ async fn established_call_preserves_drain_budget_and_joins_handler() {
     let stop = CancellationToken::new();
     let budget = Duration::from_millis(200);
     let server = start(io, counts.clone(), stop.clone(), budget);
-    let mut client = rpc::Client::from_io(peer, "http://localhost", Limits::default())
+    let mut client = triple_rpc::Client::from_io(peer, "http://localhost", Limits::default())
         .await
         .unwrap();
     let call = client
-        .call_stream("/test/Held", RpcKind::Bidirectional, &rpc::Metadata::new())
+        .call_stream(
+            "/test/Held",
+            RpcKind::Bidirectional,
+            &triple_rpc::Metadata::new(),
+        )
         .await
         .unwrap();
     let mut incoming = call.response.receive().await.unwrap();

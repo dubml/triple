@@ -17,9 +17,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use http::Request;
-use rpc::{
-    CancellationToken, Incoming, Limits, Metadata, Outgoing, Result, RpcKind, SendRole, Service,
-};
 use std::{
     sync::{
         Arc,
@@ -28,10 +25,13 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Notify, task::JoinHandle};
-use transport::Client;
+use triple_rpc::{
+    CancellationToken, Incoming, Limits, Metadata, Outgoing, Result, RpcKind, SendRole, Service,
+};
+use triple_transport::Client;
 
 // Only the payload adapter changes: rpc's public handler accepts Protobuf messages.
-// Retain transport::Client so the original post-GOAWAY ready() assertion survives.
+// Retain triple_transport::Client so the original post-GOAWAY ready() assertion survives.
 #[derive(Clone, PartialEq, prost::Message)]
 struct Payload {
     #[prost(bytes = "vec", tag = "1")]
@@ -97,7 +97,8 @@ async fn tracked_server(delay: Duration, shutdown_timeout: Duration) -> TrackedS
     });
     let task = tokio::spawn(async move {
         let (io, _) = listener.accept().await.unwrap();
-        rpc::serve_connection(io, service, Limits::default(), shutdown, shutdown_timeout).await
+        triple_rpc::serve_connection(io, service, Limits::default(), shutdown, shutdown_timeout)
+            .await
     });
     TrackedServer {
         address,
@@ -269,7 +270,7 @@ async fn cancelled_handshake_does_not_start_connection_tasks() {
     stop.cancel();
     tokio::time::timeout(
         Duration::from_secs(1),
-        rpc::serve_connection(
+        triple_rpc::serve_connection(
             io,
             Arc::new(TrackedService {
                 started: Arc::new(Notify::new()),

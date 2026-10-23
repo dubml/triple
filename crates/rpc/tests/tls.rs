@@ -19,13 +19,13 @@
 mod common;
 
 use common::{Echo, EchoService};
-use rpc::{
+use std::{sync::Arc, time::Duration};
+use tokio::net::TcpListener;
+use triple_rpc::{
     CallOptions, CancellationToken, Client, Identity, Limits, client_tls_config,
     rustls::{RootCertStore, pki_types::PrivatePkcs8KeyDer},
     serve_tls_connection, server_tls_config,
 };
-use std::{sync::Arc, time::Duration};
-use tokio::net::TcpListener;
 
 fn credentials() -> (Identity, RootCertStore) {
     let certified = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();

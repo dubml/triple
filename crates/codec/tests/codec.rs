@@ -17,7 +17,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use bytes::Bytes;
-use codec::{Error, FrameDecoder, encode_frame};
+use triple_codec::{Error, FrameDecoder, encode_frame};
 
 const WIRE: &[u8] = &[0, 0, 0, 0, 3, 10, 1, b'A'];
 

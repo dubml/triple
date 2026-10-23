@@ -21,9 +21,9 @@ use prost::Message;
 /// ```
 /// #[derive(prost::Message)]
 /// struct Echo { #[prost(string, tag = "1")] text: String }
-/// let payload = rpc::encode_message(&Echo { text: "A".into() }, 3)?;
+/// let payload = triple_rpc::encode_message(&Echo { text: "A".into() }, 3)?;
 /// assert_eq!(payload, [10, 1, b'A']);
-/// # Ok::<(), rpc::Error>(())
+/// # Ok::<(), triple_rpc::Error>(())
 /// ```
 pub fn encode_message<M: Message>(message: &M, limit: usize) -> Result<Vec<u8>> {
     let size = message.encoded_len();

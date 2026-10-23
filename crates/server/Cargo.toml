@@ -1,13 +1,20 @@
 [package]
 name = "triple-server"
-version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish = false
 
+[[example]]
+name = "server"
+path = "fake/server.rs"
+
+[[example]]
+name = "grpc_client"
+path = "fake/grpc_client.rs"
+
 [dependencies]
 triple-http = { path = "../http" }
-rpc = { path = "../rpc" }
+triple-rpc = { path = "../rpc" }
 hyper = { version = "1", features = ["http1", "http2", "server"] }
 hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
 http.workspace = true
@@ -20,14 +27,14 @@ thiserror.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
-rpc-interop = { path = "../rpc-interop" }
+protos = { path = "../protos" }
 tonic = "=0.14.6"
 rcgen = "0.14"
 hyper = { version = "1", features = ["client"] }
 prost.workspace = true
 serde_json = "1"
 triple-core = { path = "../core" }
-transport = { path = "../transport" }
+triple-transport = { path = "../transport" }
 hpack = "0.3"
 
 [lints]

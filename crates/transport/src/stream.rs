@@ -21,9 +21,9 @@ use std::{
 };
 
 use bytes::Bytes;
-use codec::{FrameDecoder, encode_frame};
 use h2::{Reason, RecvStream, SendStream};
 use http::HeaderMap;
+use triple_codec::{FrameDecoder, encode_frame};
 
 use crate::{Error, Result};
 

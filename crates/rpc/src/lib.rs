@@ -50,7 +50,6 @@ pub use client::{
 };
 pub use deadline::Deadline;
 pub use error::{Error, Result};
-pub use headers::{Code, Metadata, Status};
 pub use http2_settings::{Http2Settings, http2_settings};
 pub use hyper_server::StreamExecutor;
 pub use kernel::{
@@ -59,7 +58,8 @@ pub use kernel::{
 pub use message::{decode_message, encode_message};
 pub use server::{ResponseBody, handle, immediate_error, serve_connection};
 pub use stream::{Incoming, Outgoing, RpcKind, SendRole};
-pub use transport::{CancellationToken, Limits};
+pub use triple_headers::{Code, Metadata, Status};
+pub use triple_transport::{CancellationToken, Limits};
 
 pub use tls::{Identity, client_tls_config, serve_tls_connection, server_tls_config};
 pub use tokio_rustls::rustls;

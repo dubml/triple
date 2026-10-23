@@ -19,10 +19,6 @@
 mod common;
 
 use common::Echo;
-use rpc::{
-    Call, CallOptions, CancellationToken, Client, Error, Incoming, Limits, Outgoing, Result,
-    RpcKind, Service, serve_connection,
-};
 use std::{
     sync::{
         Arc,
@@ -31,6 +27,10 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Notify};
+use triple_rpc::{
+    Call, CallOptions, CancellationToken, Client, Error, Incoming, Limits, Outgoing, Result,
+    RpcKind, Service, serve_connection,
+};
 
 struct HandlerGuard(Arc<AtomicUsize>);
 impl Drop for HandlerGuard {

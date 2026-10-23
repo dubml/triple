@@ -13,13 +13,13 @@ use std::{
 };
 
 use prost::Message;
-use rpc::{CancellationToken, Incoming, Limits, Metadata, Outgoing, RpcKind, Service};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpListener,
     task::JoinHandle,
 };
 use tokio_util::task::TaskTracker;
+use triple_rpc::{CancellationToken, Incoming, Limits, Metadata, Outgoing, RpcKind, Service};
 
 const WAIT: Duration = Duration::from_secs(2);
 const SHUTDOWN: Duration = Duration::from_millis(40);
@@ -76,7 +76,7 @@ impl Service for Work {
         path: &str,
         request: &mut Incoming,
         response: &mut Outgoing,
-    ) -> impl Future<Output = rpc::Result<()>> + Send {
+    ) -> impl Future<Output = triple_rpc::Result<()>> + Send {
         self.calls.fetch_add(1, SeqCst);
         if path.ends_with("FactoryPanic") {
             let _guard = Guard::new(&self.panic);
@@ -94,7 +94,7 @@ impl Service for Work {
             let message = request
                 .message::<Echo>()
                 .await?
-                .ok_or(rpc::Error::Cardinality("request"))?;
+                .ok_or(triple_rpc::Error::Cardinality("request"))?;
             if path.ends_with("Held") {
                 std::future::pending().await
             } else {
@@ -150,7 +150,7 @@ struct Inspection {
 }
 #[derive(Clone)]
 struct CountingExecutor {
-    inner: rpc::StreamExecutor,
+    inner: triple_rpc::StreamExecutor,
     streams: Arc<Counts>,
 }
 impl<F> hyper::rt::Executor<F> for CountingExecutor
@@ -180,20 +180,20 @@ async fn observed_connection<T>(
     limits: Limits,
     shutdown: CancellationToken,
     inspection: Inspection,
-) -> rpc::Result<()>
+) -> triple_rpc::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let tracker = inspection.tracker;
     let stop = CancellationToken::new();
     let executor = CountingExecutor {
-        inner: rpc::StreamExecutor::new(tracker.clone(), stop.clone()),
+        inner: triple_rpc::StreamExecutor::new(tracker.clone(), stop.clone()),
         streams: inspection.streams,
     };
     let mut builder = hyper::server::conn::http2::Builder::new(executor);
-    let s = rpc::http2_settings(limits);
+    let s = triple_rpc::http2_settings(limits);
     let header_limit = u32::try_from(s.max_header_list_size)
-        .map_err(|_| transport::Error::InvalidConfig("header limit"))?;
+        .map_err(|_| triple_transport::Error::InvalidConfig("header limit"))?;
     builder
         .max_header_list_size(header_limit)
         .max_concurrent_streams(s.max_concurrent_streams)
@@ -220,7 +220,7 @@ where
     let connection = builder.serve_connection(
         hyper_util::rt::TokioIo::new(io),
         hyper::service::service_fn(move |request| {
-            rpc::handle(request, service.clone(), limits, calls.clone())
+            triple_rpc::handle(request, service.clone(), limits, calls.clone())
         }),
     );
     tokio::pin!(connection);
@@ -238,7 +238,7 @@ where
     stop.cancel();
     tracker.close();
     tracker.wait().await;
-    result.map_err(|error| rpc::Error::Io(std::io::Error::other(error)))
+    result.map_err(|error| triple_rpc::Error::Io(std::io::Error::other(error)))
 }
 
 async fn wait_for(predicate: impl Fn() -> bool) {
@@ -258,7 +258,7 @@ async fn start(
     CancellationToken,
     Arc<Work>,
     Inspection,
-    JoinHandle<rpc::Result<()>>,
+    JoinHandle<triple_rpc::Result<()>>,
 ) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
@@ -271,14 +271,14 @@ async fn start(
         if observed {
             observed_connection(io, work, Limits::default(), shutdown, tasks).await
         } else {
-            rpc::serve_connection(io, work, Limits::default(), shutdown, SHUTDOWN).await
+            triple_rpc::serve_connection(io, work, Limits::default(), shutdown, SHUTDOWN).await
         }
     });
     (address, stop, service, inspection, server)
 }
 
-async fn held(client: &mut rpc::Client, work: &Work) -> (Outgoing, Incoming) {
-    let rpc::Call {
+async fn held(client: &mut triple_rpc::Client, work: &Work) -> (Outgoing, Incoming) {
+    let triple_rpc::Call {
         mut requests,
         response,
     } = client
@@ -303,7 +303,7 @@ async fn held(client: &mut rpc::Client, work: &Work) -> (Outgoing, Incoming) {
 #[tokio::test]
 async fn connection_loss_joins_handlers_and_fails_both_halves() {
     let (address, _, work, _, server) = start(false).await;
-    let mut client = rpc::Client::connect(&address, Limits::default())
+    let mut client = triple_rpc::Client::connect(&address, Limits::default())
         .await
         .unwrap();
     let (mut outgoing, mut incoming) = held(&mut client, &work).await;
@@ -340,7 +340,7 @@ async fn handler_panics_report_failure_and_join_siblings() {
         for observed in [false, true] {
             let (address, stop, work, inspection, mut server) = start(observed).await;
             let tracker = &inspection.tracker;
-            let mut client = rpc::Client::connect(&address, Limits::default())
+            let mut client = triple_rpc::Client::connect(&address, Limits::default())
                 .await
                 .unwrap();
             let (_held_send, _held_receive) = held(&mut client, &work).await;
@@ -352,7 +352,7 @@ async fn handler_panics_report_failure_and_join_siblings() {
             } else {
                 "/test.Contract/FuturePanic"
             };
-            let rpc::Call {
+            let triple_rpc::Call {
                 mut requests,
                 response,
             } = client
@@ -370,7 +370,7 @@ async fn handler_panics_report_failure_and_join_siblings() {
             assert!(
                 matches!(
                     failed,
-                    Err(rpc::Error::Transport(transport::Error::Transport(ref error)))
+                    Err(triple_rpc::Error::Transport(triple_transport::Error::Transport(ref error)))
                         if error.reason() == Some(h2::Reason::CANCEL)
                 ),
                 "{failed:?}"
@@ -437,7 +437,7 @@ async fn pre_cancelled_plain_handshake_starts_no_tasks() {
         stop.cancel();
         let result = tokio::time::timeout(
             WAIT,
-            rpc::serve_connection(
+            triple_rpc::serve_connection(
                 ObservedIo(io, trial_io.clone()),
                 Arc::new(Work::default()),
                 Limits::default(),
@@ -475,7 +475,8 @@ async fn pre_cancelled_plain_handshake_starts_no_tasks() {
                 )
                 .await
             } else {
-                rpc::serve_connection(io, work.clone(), Limits::default(), stop, SHUTDOWN).await
+                triple_rpc::serve_connection(io, work.clone(), Limits::default(), stop, SHUTDOWN)
+                    .await
             }
         })
         .await
@@ -524,8 +525,14 @@ async fn invalid_header_limit_starts_no_connection_tasks() {
             )
             .await
         } else {
-            rpc::serve_connection(io, work.clone(), limits, CancellationToken::new(), SHUTDOWN)
-                .await
+            triple_rpc::serve_connection(
+                io,
+                work.clone(),
+                limits,
+                CancellationToken::new(),
+                SHUTDOWN,
+            )
+            .await
         };
         println!(
             "G4 observed_tracker={observed}: result={result:?} read_polls={} write_polls={} io_dropped={} handler_calls={} tracker_len={:?} streams_created={:?}",
@@ -538,9 +545,9 @@ async fn invalid_header_limit_starts_no_connection_tasks() {
         );
         assert!(matches!(
             result,
-            Err(rpc::Error::Transport(transport::Error::InvalidConfig(
-                "header limit"
-            )))
+            Err(triple_rpc::Error::Transport(
+                triple_transport::Error::InvalidConfig("header limit")
+            ))
         ));
         assert_eq!(counts.reads.load(SeqCst), 0);
         assert_eq!(counts.writes.load(SeqCst), 0);

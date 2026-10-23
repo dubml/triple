@@ -35,7 +35,7 @@ pub struct CallOptions {
 
 /// One native Protobuf client on a multiplexed HTTP/2 connection.
 pub struct Client {
-    transport: transport::Client,
+    transport: triple_transport::Client,
     origin: Uri,
     limits: Limits,
 }
@@ -50,7 +50,7 @@ impl Client {
     pub async fn connect(address: &str, limits: Limits) -> Result<Self> {
         let origin = parse_origin(&format!("http://{address}"))?;
         Ok(Self {
-            transport: transport::Client::connect(address, limits).await?,
+            transport: triple_transport::Client::connect(address, limits).await?,
             origin,
             limits,
         })
@@ -63,7 +63,7 @@ impl Client {
     {
         let origin = parse_origin(origin)?;
         Ok(Self {
-            transport: transport::Client::from_io(io, limits).await?,
+            transport: triple_transport::Client::from_io(io, limits).await?,
             origin,
             limits,
         })
@@ -99,7 +99,7 @@ impl Client {
         kind: RpcKind,
         options: &CallOptions,
     ) -> Result<Call> {
-        headers::validate_path(path)?;
+        triple_headers::validate_path(path)?;
         let timeout = options.deadline.map(Deadline::to_header).transpose()?;
         let request = prepare_request(
             &self.origin,
@@ -185,13 +185,14 @@ pub fn prepare_request(
     timeout: Option<&str>,
     limits: Limits,
 ) -> Result<Request<()>> {
-    headers::validate_path(path)?;
+    triple_headers::validate_path(path)?;
     let mut parts = origin.clone().into_parts();
     parts.path_and_query = Some(path.parse().map_err(|_| Error::InvalidHeader("RPC path"))?);
     let uri = Uri::from_parts(parts).map_err(|_| Error::InvalidHeader("RPC URI"))?;
     let mut request = Request::builder().method("POST").uri(uri).body(())?;
-    *request.headers_mut() = headers::request_headers(metadata, timeout, limits.max_header_size)?;
-    headers::check_request_headers(&request, limits.max_header_size)?;
+    *request.headers_mut() =
+        triple_headers::request_headers(metadata, timeout, limits.max_header_size)?;
+    triple_headers::check_request_headers(&request, limits.max_header_size)?;
     Ok(request)
 }
 
@@ -223,18 +224,20 @@ pub struct ResponseHead {
 
 /// Validates leading response fields before any Protobuf body is read.
 pub fn parse_response(response: Response<h2::RecvStream>, limit: usize) -> Result<ResponseHead> {
-    headers::check_response_headers(response.headers(), limit)?;
+    triple_headers::check_response_headers(response.headers(), limit)?;
     if response.status() != StatusCode::OK {
-        return Err(headers::http_error(response.status()).into());
+        return Err(triple_headers::http_error(response.status()).into());
     }
-    headers::validate_content_type(response.headers())?;
-    headers::validate_encoding(response.headers())?;
-    let metadata =
-        Metadata::from_headers_with_reserved(response.headers(), headers::is_grpc_reserved_header)?;
+    triple_headers::validate_content_type(response.headers())?;
+    triple_headers::validate_encoding(response.headers())?;
+    let metadata = Metadata::from_headers_with_reserved(
+        response.headers(),
+        triple_headers::is_grpc_reserved_header,
+    )?;
     let status = response
         .headers()
         .contains_key("grpc-status")
-        .then(|| headers::parse_status(response.headers(), limit))
+        .then(|| triple_headers::parse_status(response.headers(), limit))
         .transpose()?;
     if status.is_some() && !response.body().is_end_stream() {
         return Err(Error::InvalidHeader("grpc-status before stream end"));
@@ -254,7 +257,7 @@ impl PendingResponse {
                 .run(async {
                     self.response
                         .await
-                        .map_err(transport::Error::from)
+                        .map_err(triple_transport::Error::from)
                         .map_err(Error::from)
                 })
                 .await?,

@@ -17,7 +17,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 mod common;
 use common::{Echo, spawn_server};
-use rpc::{Call, Client, Code, Error, Limits, Metadata};
+use triple_rpc::{Call, Client, Code, Error, Limits, Metadata};
 #[tokio::test]
 async fn unary_reuses_connection_and_roundtrips_metadata() {
     let (address, stop, server) = spawn_server(Limits::default()).await.unwrap();

@@ -15,26 +15,20 @@
 
 [package]
 name = "rpc-interop"
-version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
-anyhow = "1"
-rpc = { path = "../rpc" }
-transport = { path = "../transport" }
-prost.workspace = true
+protos = { path = "../protos" }
 tokio.workspace = true
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = "=0.14.6"
-tonic-prost = "=0.14.6"
-
-[build-dependencies]
-anyhow = "1"
-tonic-prost-build = "=0.14.6"
 
 [dev-dependencies]
+triple-rpc = { path = "../rpc" }
+triple-transport = { path = "../transport" }
+prost.workspace = true
 hyper = { version = "1", features = ["http2", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 tokio-util = { version = "0.7", features = ["rt"] }

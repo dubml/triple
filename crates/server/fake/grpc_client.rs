@@ -1,5 +1,5 @@
 //! Calls the independent tonic-generated Echo client against the single-port example.
-use rpc_interop::proto::{EchoMessage, echo_client::EchoClient};
+use protos::echo::{EchoMessage, echo_client::EchoClient};
 
 #[tokio::main]
 async fn main() -> Result<(), triple_server::BoxError> {

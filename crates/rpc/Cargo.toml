@@ -14,17 +14,16 @@
 # limitations under the License.
 
 [package]
-name = "rpc"
-version = "0.1.0"
+name = "triple-rpc"
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
 triple-core = { path = "../core" }
-codec = { path = "../codec" }
-headers = { path = "../headers" }
-transport = { path = "../transport" }
+triple-codec = { path = "../codec" }
+triple-headers = { path = "../headers" }
+triple-transport = { path = "../transport" }
 bytes.workspace = true
 h2.workspace = true
 http.workspace = true

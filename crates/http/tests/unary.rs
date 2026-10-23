@@ -24,6 +24,7 @@ use hyper_util::{
     server::conn::auto::Builder,
 };
 use prost::Message;
+use protos::greeter::{HelloReply, HelloRequest};
 use tokio::{
     net::{TcpListener, TcpStream},
     task::JoinHandle,
@@ -36,19 +37,6 @@ use triple_http::{
 const PATH: &str = "/demo.Greeter/SayHello";
 const JSON: &[u8] = br#"[{"name":"Alice"}]"#;
 const REPLY: &[u8] = br#"{"message":"Hello Alice"}"#;
-
-// The IDL fixture is tests/greeter.proto; prost derives its bare message codec.
-#[derive(Clone, PartialEq, Message)]
-struct HelloRequest {
-    #[prost(string, tag = "1")]
-    name: String,
-}
-
-#[derive(Clone, PartialEq, Message)]
-struct HelloReply {
-    #[prost(string, tag = "1")]
-    message: String,
-}
 
 #[derive(Copy, Clone, Debug)]
 enum Wire {

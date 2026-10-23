@@ -6,7 +6,6 @@ use http::{Request, Response, StatusCode, Version, header};
 use http_body_util::{Either, Full};
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioIo, TokioTimer};
-use rpc::{CancellationToken, Limits, StreamExecutor};
 use std::{error::Error as StdError, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -15,13 +14,14 @@ use tokio::{
 };
 use tokio_rustls::{TlsAcceptor, rustls};
 use tokio_util::task::TaskTracker;
+use triple_rpc::{CancellationToken, Limits, StreamExecutor};
 
 mod accept;
 
 /// Unified service/body error for both bindings.
 pub type BoxError = Box<dyn StdError + Send + Sync>;
 /// The response body is either a streaming RPC or a complete HTTP Unary value.
-pub type ResponseBody = Either<rpc::ResponseBody, Full<Bytes>>;
+pub type ResponseBody = Either<triple_rpc::ResponseBody, Full<Bytes>>;
 
 /// Listener, TLS or connection-driver failure.
 #[derive(Debug, thiserror::Error)]
@@ -95,7 +95,7 @@ pub struct Server<S, H> {
     http: Arc<H>,
     config: Config,
 }
-impl<S: rpc::Service + 'static, H: triple_http::UnaryHandler + 'static> Server<S, H> {
+impl<S: triple_rpc::Service + 'static, H: triple_http::UnaryHandler + 'static> Server<S, H> {
     /// Creates a server, advertising both supported protocols when TLS is enabled.
     pub fn new(rpc: Arc<S>, http: Arc<H>, mut config: Config) -> Self {
         if let Some(tls) = config.tls.take() {
@@ -198,7 +198,7 @@ impl<S: rpc::Service + 'static, H: triple_http::UnaryHandler + 'static> Server<S
             .http1()
             .timer(TokioTimer::new())
             .header_read_timeout(self.config.header_read_timeout);
-        let settings = rpc::http2_settings(self.config.rpc_limits);
+        let settings = triple_rpc::http2_settings(self.config.rpc_limits);
         let headers = u32::try_from(settings.max_header_list_size)
             .map_err(|_| Error::InvalidConfig("header limit"))?;
         // Every supported numeric option comes from rpc's frozen configuration.
@@ -258,7 +258,7 @@ impl<S: rpc::Service + 'static, H: triple_http::UnaryHandler + 'static> Server<S
     }
 }
 
-async fn dispatch<S: rpc::Service + 'static, H: triple_http::UnaryHandler>(
+async fn dispatch<S: triple_rpc::Service + 'static, H: triple_http::UnaryHandler>(
     request: Request<Incoming>,
     rpc: Arc<S>,
     http: Arc<H>,
@@ -285,7 +285,7 @@ async fn dispatch<S: rpc::Service + 'static, H: triple_http::UnaryHandler>(
             return Ok(response);
         }
         // TODO(spec): Preserve rpc's rejection of +json and triple+wrapper.
-        rpc::handle(request, rpc, limits, tracker)
+        triple_rpc::handle(request, rpc, limits, tracker)
             .await
             .map(|r| r.map(Either::Left))
             .map_err(|e| Box::new(e) as BoxError)
