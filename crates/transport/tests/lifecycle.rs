@@ -18,21 +18,12 @@
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Request, Response};
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::time::Duration;
 use tokio::{
     net::TcpListener,
-    sync::Notify,
     task::{JoinHandle, JoinSet},
 };
-use triple_transport::{
-    CancellationToken, Client, Error, Limits, Receiver, Result, Sender, serve_connection,
-};
+use triple_transport::{CancellationToken, Client, Error, Limits, Receiver, Result, Sender};
 
 fn final_trailers() -> HeaderMap {
     let mut trailers = HeaderMap::new();
@@ -98,7 +89,7 @@ async fn echo_server() -> (String, CancellationToken, JoinHandle<Result<()>>) {
     let task = tokio::spawn(async move {
         let (io, _) = listener.accept().await.unwrap();
         // A test-local h2 peer keeps the client assertions independent of the
-        // retired server implementation. Only the deferred panic fixture uses it.
+        // retired server implementation.
         let limits = Limits::default();
         let mut connection = h2::server::Builder::new()
             .max_header_list_size(u32::try_from(limits.max_header_size).unwrap())
@@ -265,106 +256,6 @@ async fn messages_larger_than_flow_windows_complete_in_both_directions() {
     drop(client);
     stop.cancel();
     join_server(server).await;
-}
-
-struct HandlerGuard(Arc<AtomicUsize>);
-impl Drop for HandlerGuard {
-    fn drop(&mut self) {
-        self.0.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-struct TrackedServer {
-    address: String,
-    task: JoinHandle<Result<()>>,
-    started: Arc<Notify>,
-    dropped: Arc<AtomicUsize>,
-}
-
-async fn tracked_server(delay: Duration, shutdown_timeout: Duration) -> TrackedServer {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap().to_string();
-    let started = Arc::new(Notify::new());
-    let dropped = Arc::new(AtomicUsize::new(0));
-    let stop = CancellationToken::new();
-    let notify = Arc::clone(&started);
-    let count = Arc::clone(&dropped);
-    let shutdown = stop.clone();
-    let task = tokio::spawn(async move {
-        let (io, _) = listener.accept().await.unwrap();
-        serve_connection(
-            io,
-            move |request, mut responder| {
-                if request.uri().path() == "/test/FactoryPanic" {
-                    panic!("intentional handler construction panic");
-                }
-                let notify = Arc::clone(&notify);
-                let count = Arc::clone(&count);
-                async move {
-                    if request.uri().path() == "/test/Panic" {
-                        panic!("intentional stream handler panic");
-                    }
-                    let _guard = HandlerGuard(count);
-                    let stream = responder
-                        .send_response(Response::builder().body(()).unwrap(), false)
-                        .unwrap();
-                    let mut sender = Sender::new(stream, Limits::default().max_message_size);
-                    let reset = sender.reset_signal();
-                    let mut incoming =
-                        Receiver::new(request.into_body(), Limits::default().max_message_size);
-                    tokio::select! {
-                        _ = async {
-                            let payload = incoming.message().await.unwrap().unwrap();
-                            notify.notify_one();
-                            tokio::time::sleep(delay).await;
-                            sender.send(&payload).await.unwrap();
-                            let mut trailers = final_trailers();
-                            trailers.insert("completed", HeaderValue::from_static("yes"));
-                            sender.finish(trailers).unwrap();
-                        } => {},
-                        _ = reset => { sender.reset(); },
-                    }
-                }
-            },
-            Limits::default(),
-            shutdown,
-            shutdown_timeout,
-        )
-        .await
-    });
-    TrackedServer {
-        address,
-        task,
-        started,
-        dropped,
-    }
-}
-
-async fn started(server: &TrackedServer) {
-    tokio::time::timeout(Duration::from_secs(2), server.started.notified())
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn handler_panic_is_reported_and_other_handlers_are_joined() {
-    for path in ["/test/Panic", "/test/FactoryPanic"] {
-        let server = tracked_server(Duration::from_secs(60), Duration::from_secs(1)).await;
-        let mut client = Client::connect(&server.address, Limits::default())
-            .await
-            .unwrap();
-        let (mut requests, response) = open(&mut client, "/test/Held").await;
-        requests.send(b"held").await.unwrap();
-        let _incoming = receive(response).await;
-        started(&server).await;
-        let (_request, _response) = open(&mut client, path).await;
-        let result = tokio::time::timeout(Duration::from_secs(2), server.task)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(matches!(result, Err(Error::HandlerTask(error)) if error.is_panic()));
-        assert_eq!(server.dropped.load(Ordering::SeqCst), 1);
-    }
 }
 
 #[tokio::test]

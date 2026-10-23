@@ -13,19 +13,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Multiplexed HTTP/2 connections and bounded Triple frame transport.
+//! Multiplexed HTTP/2 clients and bounded Triple frame transport.
 //!
 //! Payloads are opaque bytes. RPC dispatch, message cardinality, final status,
 //! deadlines and TLS identity configuration belong to the calling protocol layer.
 
 mod client;
 mod error;
-mod server;
 mod stream;
 
 pub use client::Client;
 pub use error::{Error, Result};
-pub use server::serve_connection;
 pub use stream::{Receiver, Sender};
 pub use tokio_util::sync::CancellationToken;
 

@@ -388,7 +388,7 @@ where
     let settings = crate::http2_settings(limits);
     let header_limit = u32::try_from(settings.max_header_list_size)
         .map_err(|_| triple_transport::Error::InvalidConfig("header limit"))?;
-    // Match triple_transport::server: header limit and concurrent streams are Limits;
+    // Match the retired h2 server: header limit and concurrent streams are Limits;
     // its fixed h2 defaults are 16384-byte frames and 65535-byte windows.
     builder
         .max_header_list_size(header_limit)
