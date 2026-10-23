@@ -19,7 +19,7 @@ flate2 = "1"
 tokio.workspace = true
 
 [dev-dependencies]
-protos = { path = "../protos" }
+protos = { path = "../../tests/protos" }
 hyper = { version = "1", features = ["client"] }
 hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
 prost.workspace = true

@@ -1,6 +1,5 @@
 //! Serves demo.Greeter and the interoperable test.Echo Unary method on one port.
 mod common;
-#[path = "../interop-dubbo/trace.rs"]
 mod trace;
 use std::sync::Arc;
 use triple_server::{BoxError, Config, Server};
